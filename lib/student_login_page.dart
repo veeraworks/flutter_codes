@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'student_home_page.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'student_otp_page.dart';
+import 'student_signup_page.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // 🔥 kept as requested
 
 class StudentLoginPage extends StatefulWidget {
   const StudentLoginPage({super.key});
@@ -15,7 +17,7 @@ class _StudentLoginPageState extends State<StudentLoginPage>
   final TextEditingController idController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
-  bool _obscurePassword = true;
+  bool _obscurePassword = false;
 
   late AnimationController _shakeController;
   late Animation<double> _shakeAnimation;
@@ -42,27 +44,28 @@ class _StudentLoginPageState extends State<StudentLoginPage>
     super.dispose();
   }
 
-  // 🔥 FIREBASE LOGIN FUNCTION
-  Future<void> _login() async {
-    try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: idController.text.trim(),
-        password: passwordController.text.trim(),
-      );
+  // ✅ MANUAL LOGIN (Firebase NOT touched)
+  void _login() {
+    String studentId = idController.text.trim();
+    String mobileNumber = passwordController.text.trim();
 
-      // ✅ Login success → go to home
+    if (studentId == "hi" && mobileNumber == "123") {
+      // ✅ Success → go to OTP page
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) => StudentHomePage(),
+          builder: (context) => StudentOtpPage(
+            studentId: studentId,
+            phoneNumber: mobileNumber,
+          ),
         ),
       );
-
-    } on FirebaseAuthException catch (e) {
+    } else {
+      // ❌ Failure
       _shakeController.forward(from: 0);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.message ?? "Login failed"),
+        const SnackBar(
+          content: Text("Invalid Student ID or Mobile Number"),
           backgroundColor: Colors.red,
         ),
       );
@@ -147,13 +150,13 @@ class _StudentLoginPageState extends State<StudentLoginPage>
 
                           const SizedBox(height: 24),
 
-                          /// 📧 EMAIL
+                          /// 🆔 STUDENT ID
                           TextField(
                             controller: idController,
-                            keyboardType: TextInputType.emailAddress,
+                            keyboardType: TextInputType.text,
                             decoration: InputDecoration(
-                              prefixIcon: const Icon(Icons.email, color: Colors.teal),
-                              hintText: 'Email',
+                              prefixIcon: const Icon(Icons.badge, color: Colors.teal),
+                              hintText: 'Student ID',
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
@@ -162,28 +165,15 @@ class _StudentLoginPageState extends State<StudentLoginPage>
 
                           const SizedBox(height: 16),
 
-                          /// 🔒 PASSWORD
+                          /// 📱 MOBILE NUMBER
                           TextField(
                             controller: passwordController,
-                            obscureText: _obscurePassword,
+                            keyboardType: TextInputType.phone,
                             decoration: InputDecoration(
-                              prefixIcon: const Icon(Icons.lock, color: Colors.teal),
-                              hintText: 'Password',
+                              prefixIcon: const Icon(Icons.phone, color: Colors.teal),
+                              hintText: 'Mobile Number',
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
-                              ),
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  _obscurePassword
-                                      ? Icons.visibility_off
-                                      : Icons.visibility,
-                                  color: Colors.teal,
-                                ),
-                                onPressed: () {
-                                  setState(() {
-                                    _obscurePassword = !_obscurePassword;
-                                  });
-                                },
                               ),
                             ),
                           ),
@@ -213,14 +203,39 @@ class _StudentLoginPageState extends State<StudentLoginPage>
                             ),
                           ),
 
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 14),
 
-                          TextButton(
-                            onPressed: () {},
-                            child: const Text(
-                              'Forgot Password?',
-                              style: TextStyle(color: Colors.teal),
-                            ),
+                          /// 🌟 BETTER SIGN UP SECTION
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Text(
+                                "New here? ",
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.black,
+                                ),
+                              ),
+                              GestureDetector(
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => const StudentSignupPage(),
+                                    ),
+                                  );
+                                },
+                                child: const Text(
+                                  "Create an account",
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    color: Colors.teal,
+                                    fontWeight: FontWeight.bold,
+
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
