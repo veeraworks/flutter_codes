@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'settings_page.dart';
 import 'map_page.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'main.dart';
+import 'help_page.dart';
 
 class StudentHomePage extends StatefulWidget {
   const StudentHomePage({super.key});
@@ -10,21 +14,108 @@ class StudentHomePage extends StatefulWidget {
 }
 
 class _StudentHomePageState extends State<StudentHomePage> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   int _currentIndex = 0;
-
-  // bus status values: arriving, delayed, not_arriving
   String busStatus = 'arriving';
+
+  // ✅ LOGOUT FUNCTION
+  void _logout() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text("Logout"),
+        content: const Text("Are you sure you want to logout?"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await FirebaseAuth.instance.signOut();
+
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (_) => const WelcomePage()),
+                    (route) => false,
+              );
+            },
+            child:
+            const Text("Logout", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: const Color(0xFFF6F3F7),
+
+      // ================= DRAWER =================
+      drawer: Drawer(
+        child: Column(
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 50, 20, 20),
+              color: const Color(0xFF00BFA6),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    radius: 28,
+                    backgroundColor: Colors.white,
+                    child: Icon(Icons.person,
+                        size: 32, color: Color(0xFF00BFA6)),
+                  ),
+                  SizedBox(height: 12),
+                  Text("VEERA",
+                      style: TextStyle(color: Colors.white, fontSize: 20)),
+                  Text("Student",
+                      style: TextStyle(color: Colors.white70)),
+                ],
+              ),
+            ),
+
+            _drawerItem(Icons.route, "My Route", () {}),
+
+            _drawerItem(Icons.notifications, "Notifications", () {
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const NotificationsPage()));
+            }),
+
+            _drawerItem(Icons.settings, "Settings", () {
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const SettingsPage()));
+            }),
+
+            _drawerItem(Icons.info, "About App", () {
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const AboutApp()));
+            }),
+
+            const Spacer(),
+
+            // ✅ LOGOUT CONNECTED
+            _drawerItem(Icons.logout, "Logout", () {
+              _logout();
+            }),
+
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+
+      // ================= BODY =================
       body: SingleChildScrollView(
         child: Column(
           children: [
-
-            // 🔝 HEADER
+            // HEADER
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(20, 40, 20, 28),
@@ -37,37 +128,45 @@ class _StudentHomePageState extends State<StudentHomePage> {
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
+                children: [
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Icon(Icons.menu, color: Colors.white),
-                      Text('BusTrackPro',
-                          style: TextStyle(color: Colors.white, fontSize: 20)),
+                      GestureDetector(
+                        onTap: () {
+                          _scaffoldKey.currentState!.openDrawer();
+                        },
+                        child: const Icon(Icons.menu, color: Colors.white),
+                      ),
+                      const Text('BusTrackPro',
+                          style:
+                          TextStyle(color: Colors.white, fontSize: 20)),
                     ],
                   ),
-                  SizedBox(height: 22),
-                  Text('Welcome, VEERA',
-                      style: TextStyle(color: Colors.white, fontSize: 26)),
-                  SizedBox(height: 6),
-                  Text('Route: Madambakkam',
-                      style: TextStyle(color: Colors.white70, fontSize: 16)),
-                  SizedBox(height: 2),
-                  Text('Track your bus in real-time',
-                      style: TextStyle(color: Colors.white70, fontSize: 16)),
+                  const SizedBox(height: 22),
+                  const Text('Welcome, VEERA',
+                      style:
+                      TextStyle(color: Colors.white, fontSize: 26)),
+                  const SizedBox(height: 6),
+                  const Text('Route: Madambakkam',
+                      style: TextStyle(
+                          color: Colors.white70, fontSize: 16)),
+                  const SizedBox(height: 2),
+                  const Text('Track your bus in real-time',
+                      style: TextStyle(
+                          color: Colors.white70, fontSize: 16)),
                 ],
               ),
             ),
 
             const SizedBox(height: 16),
 
-            // 🟢 LIVE BUS STATUS
+            // LIVE BUS STATUS
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-
                   const Text('Live Bus Status',
                       style: TextStyle(fontSize: 19)),
                   const SizedBox(height: 10),
@@ -86,7 +185,6 @@ class _StudentHomePageState extends State<StudentHomePage> {
                     ),
                     child: Row(
                       children: [
-
                         Container(
                           width: 42,
                           height: 42,
@@ -101,36 +199,24 @@ class _StudentHomePageState extends State<StudentHomePage> {
                           child: const Icon(Icons.directions_bus,
                               color: Colors.white),
                         ),
-
                         const SizedBox(width: 12),
-
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-
-                            Text(
-                              busStatus == 'arriving'
-                                  ? 'Arriving in 5 mins'
-                                  : busStatus == 'delayed'
-                                  ? 'Bus delayed'
-                                  : 'Bus not arriving',
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-
-                            const SizedBox(height: 2),
-
-                            const Text('Route: Madambakkam',
+                          children: const [
+                            Text('Arriving in 5 mins',
                                 style: TextStyle(
-                                    fontSize: 14, color: Colors.black87)),
-
-                            const SizedBox(height: 2),
-
-                            const Text('Last updated 1 min ago',
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500)),
+                            SizedBox(height: 2),
+                            Text('Route: Madambakkam',
                                 style: TextStyle(
-                                    fontSize: 13, color: Colors.black54)),
+                                    fontSize: 14,
+                                    color: Colors.black87)),
+                            SizedBox(height: 2),
+                            Text('Last updated 1 min ago',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.black54)),
                           ],
                         ),
                       ],
@@ -139,7 +225,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
                   const SizedBox(height: 18),
 
-                  // 🗺️ LIVE BUS TRACKING
+                  // LIVE TRACKING
                   const Text('Live Bus Tracking',
                       style: TextStyle(fontSize: 18)),
                   const SizedBox(height: 10),
@@ -157,10 +243,9 @@ class _StudentHomePageState extends State<StudentHomePage> {
                     ),
                     child: Column(
                       children: [
-
-                        SizedBox(
+                        const SizedBox(
                           height: 170,
-                          child: const GoogleMap(
+                          child: GoogleMap(
                             initialCameraPosition: CameraPosition(
                               target: LatLng(13.0827, 80.2707),
                               zoom: 13,
@@ -193,7 +278,8 @@ class _StudentHomePageState extends State<StudentHomePage> {
                               child: Center(
                                 child: Text('Open Map',
                                     style: TextStyle(
-                                        color: Colors.white, fontSize: 16)),
+                                        color: Colors.white,
+                                        fontSize: 16)),
                               ),
                             ),
                           ),
@@ -210,7 +296,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
         ),
       ),
 
-      // 🔻 BOTTOM NAV
+      // ================= BOTTOM NAV =================
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         selectedItemColor: const Color(0xFF00BFA6),
@@ -218,16 +304,15 @@ class _StudentHomePageState extends State<StudentHomePage> {
         type: BottomNavigationBarType.fixed,
         onTap: (index) {
           if (index == 1) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                  builder: (_) => const NotificationsPage()),
-            );
+            Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const NotificationsPage()));
+          } else if (index == 2) {
+            // ✅ HELP PAGE
+            Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const HelpPage()));
           } else if (index == 3) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AboutApp()),
-            );
+            Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const AboutApp()));
           } else {
             setState(() => _currentIndex = index);
           }
@@ -242,7 +327,16 @@ class _StudentHomePageState extends State<StudentHomePage> {
       ),
     );
   }
+
+  Widget _drawerItem(IconData icon, String title, VoidCallback onTap) {
+    return ListTile(
+      leading: Icon(icon, color: const Color(0xFF00BFA6)),
+      title: Text(title, style: const TextStyle(fontSize: 16)),
+      onTap: onTap,
+    );
+  }
 }
+
 
 /* ================= NOTIFICATIONS PAGE ================= */
 
