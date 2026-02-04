@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'driver_home_page.dart';
 import 'driver_signup_page.dart';
+import 'driver_otp_page.dart'; // ✅ OTP PAGE
 
 class DriverLoginPage extends StatefulWidget {
   const DriverLoginPage({super.key});
@@ -24,6 +23,11 @@ class _DriverLoginPageState extends State<DriverLoginPage>
   @override
   void initState() {
     super.initState();
+
+    // ✅ DEFAULT VALUES (for testing)
+    driverNameController.text = "Driver One";
+    phoneController.text = "9876543210";
+
     shakeController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
@@ -38,6 +42,7 @@ class _DriverLoginPageState extends State<DriverLoginPage>
     super.dispose();
   }
 
+  // 🔐 LOGIN → OTP PAGE
   void driverLogin() async {
     final name = driverNameController.text.trim();
     final phone = phoneController.text.trim();
@@ -49,11 +54,20 @@ class _DriverLoginPageState extends State<DriverLoginPage>
     }
 
     setState(() => isLoading = true);
+
+    // ⏳ simulate API / OTP send
     await Future.delayed(const Duration(seconds: 1));
 
-    Navigator.pushReplacement(
+    setState(() => isLoading = false);
+
+    // ✅ NAVIGATE TO OTP PAGE
+    Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const DriverHomePage()),
+      MaterialPageRoute(
+        builder: (_) => DriverOtpPage(
+          phoneNumber: phone,
+        ),
+      ),
     );
   }
 
@@ -89,10 +103,15 @@ class _DriverLoginPageState extends State<DriverLoginPage>
       body: Stack(
         children: [
 
+          // 🌍 Background map image
           Positioned.fill(
-            child: Image.asset('assets/images/maps6.png', fit: BoxFit.cover),
+            child: Image.asset(
+              'assets/images/maps6.png',
+              fit: BoxFit.cover,
+            ),
           ),
 
+          // ☁ White overlay
           Positioned.fill(
             child: Container(color: Colors.white.withOpacity(0.50)),
           ),
@@ -104,6 +123,7 @@ class _DriverLoginPageState extends State<DriverLoginPage>
                 mainAxisSize: MainAxisSize.min,
                 children: [
 
+                  // 🚌 Bus icon
                   Container(
                     width: 110,
                     height: 110,
@@ -111,12 +131,16 @@ class _DriverLoginPageState extends State<DriverLoginPage>
                       color: Color(0xFFE0F7F3),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.directions_bus_filled,
-                        size: 60, color: Color(0xFF00C9A7)),
+                    child: const Icon(
+                      Icons.directions_bus_filled,
+                      size: 60,
+                      color: Color(0xFF00C9A7),
+                    ),
                   ),
 
                   const SizedBox(height: 30),
 
+                  // 📦 Login Card
                   Container(
                     padding: const EdgeInsets.fromLTRB(22, 28, 22, 28),
                     decoration: BoxDecoration(
@@ -144,6 +168,7 @@ class _DriverLoginPageState extends State<DriverLoginPage>
 
                         const SizedBox(height: 22),
 
+                        // 👤 Driver name
                         TextField(
                           controller: driverNameController,
                           decoration: inputDecoration(
@@ -154,6 +179,7 @@ class _DriverLoginPageState extends State<DriverLoginPage>
 
                         const SizedBox(height: 18),
 
+                        // 📱 Phone number
                         TextField(
                           controller: phoneController,
                           keyboardType: TextInputType.phone,
@@ -177,7 +203,7 @@ class _DriverLoginPageState extends State<DriverLoginPage>
 
                         const SizedBox(height: 26),
 
-                        // ✅ MODERN DRIVER LOGIN BUTTON
+                        // 🔘 SEND OTP BUTTON
                         GestureDetector(
                           onTap: isLoading ? null : driverLogin,
                           child: Container(
@@ -198,7 +224,7 @@ class _DriverLoginPageState extends State<DriverLoginPage>
                               color: Colors.white,
                             )
                                 : const Text(
-                              "DRIVER LOGIN",
+                              "SEND OTP",
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 16,
@@ -211,19 +237,24 @@ class _DriverLoginPageState extends State<DriverLoginPage>
 
                         const SizedBox(height: 18),
 
+                        // ➕ Signup
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Text("New here? ",
-                                style: TextStyle(
-                                    fontSize: 14, color: Colors.black54)),
+                            const Text(
+                              "New here? ",
+                              style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.black54),
+                            ),
                             GestureDetector(
                               onTap: () {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                      builder: (_) =>
-                                      const DriverSignupPage()),
+                                    builder: (_) =>
+                                    const DriverSignupPage(),
+                                  ),
                                 );
                               },
                               child: const Text(
