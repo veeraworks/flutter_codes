@@ -1,6 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'temporary_bus_change_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'driver_profile_page.dart';
 import 'driver_settings_page.dart';
@@ -20,14 +25,29 @@ class _DriverHomePageState extends State<DriverHomePage> {
   bool internetOn = false;
   bool locationSyncOn = false;
 
+  String? busId;
+  StreamSubscription<Position>? positionStream;
+
   @override
   void initState() {
     super.initState();
+    _loadBusId();
     _checkStatuses();
   }
 
-  // ---------------- CHECK GPS / INTERNET ----------------
+  @override
+  void dispose() {
+    positionStream?.cancel();
+    super.dispose();
+  }
 
+  // ================= LOAD BUS ID =================
+  Future<void> _loadBusId() async {
+    final prefs = await SharedPreferences.getInstance();
+    busId = prefs.getString("busId");
+  }
+
+  // ---------------- CHECK GPS / INTERNET ----------------
   Future<void> _checkStatuses() async {
     bool gpsEnabled = await Geolocator.isLocationServiceEnabled();
     final connectivity = await Connectivity().checkConnectivity();
@@ -40,35 +60,90 @@ class _DriverHomePageState extends State<DriverHomePage> {
     });
   }
 
-  // ---------------- START / END TRIP ----------------
+  // ================= START GPS TRACKING =================
+  Future<void> _startLocationUpdates() async {
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.deniedForever) return;
 
+    positionStream = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5,
+      ),
+    ).listen((position) {
+      if (busId == null) return;
+
+      FirebaseDatabase.instance.ref("buses/$busId").set({
+        "lat": position.latitude,
+        "lng": position.longitude,
+        "updatedAt": ServerValue.timestamp,
+      });
+    });
+  }
+
+  // ---------------- START / END TRIP ----------------
   void _toggleTrip() async {
     await _checkStatuses();
 
-    if (!gpsOn) {
+    if (busId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please enable GPS")),
-      );
-      await Geolocator.openLocationSettings();
-      return;
-    }
-
-    if (!internetOn) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please enable Internet")),
+        const SnackBar(content: Text("Bus ID not found")),
       );
       return;
     }
 
-    setState(() {
-      tripStarted = !tripStarted;
-    });
+    if (!tripStarted) {
+      // ▶ START TRIP
+      if (!gpsOn) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Please enable GPS")),
+        );
+        await Geolocator.openLocationSettings();
+        return;
+      }
+
+      if (!internetOn) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Please enable Internet")),
+        );
+        return;
+      }
+
+      // 🔥 FIREBASE: START TRIP
+      await FirebaseDatabase.instance
+          .ref("busTrips/$busId/status")
+          .set("STARTED");
+
+      // 🔥 START GPS
+      await _startLocationUpdates();
+
+      setState(() {
+        tripStarted = true;
+      });
+    } else {
+      // ⏹ END TRIP
+
+      // 🔥 FIREBASE: END TRIP
+      await FirebaseDatabase.instance
+          .ref("busTrips/$busId/status")
+          .set("ENDED");
+
+      // 🔥 STOP GPS
+      await positionStream?.cancel();
+      positionStream = null;
+
+      setState(() {
+        tripStarted = false;
+      });
+    }
 
     await _checkStatuses();
   }
 
   // ---------------- UI ----------------
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -79,8 +154,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
-
-            // HEADER
             DrawerHeader(
               decoration: const BoxDecoration(
                 color: Color(0xFF00BFA6),
@@ -106,7 +179,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
               ),
             ),
 
-            // PROFILE
             ListTile(
               leading: const Icon(Icons.person),
               title: const Text("Profile"),
@@ -121,7 +193,22 @@ class _DriverHomePageState extends State<DriverHomePage> {
               },
             ),
 
-            // ISSUE REPORTING
+            // TEMPORARY BUS CHANGE
+            ListTile(
+              leading: const Icon(Icons.swap_horiz, color: Colors.orange),
+              title: const Text("Temporary Bus Change"),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const TemporaryBusChangePage(),
+                  ),
+                );
+              },
+            ),
+
+
             ListTile(
               leading: const Icon(Icons.report_problem, color: Colors.red),
               title: const Text("Issue Reporting"),
@@ -136,7 +223,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
               },
             ),
 
-            // SETTINGS
             ListTile(
               leading: const Icon(Icons.settings),
               title: const Text("Settings"),
@@ -156,7 +242,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
       body: Column(
         children: [
-
           // HEADER
           Container(
             width: double.infinity,
@@ -190,8 +275,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
                   children: [
                     const Text(
                       'Driver Dashboard',
-                      style:
-                      TextStyle(color: Colors.white, fontSize: 22),
+                      style: TextStyle(color: Colors.white, fontSize: 22),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -210,7 +294,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
           const SizedBox(height: 20),
 
-          // BUS INFO
           _infoCard(
             title: 'Bus Information',
             children: const [
@@ -222,7 +305,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
           const SizedBox(height: 16),
 
-          // LOCATION STATUS
           _infoCard(
             title: 'Location Status',
             children: [
@@ -234,7 +316,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
           const SizedBox(height: 24),
 
-          // START / END TRIP
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: GestureDetector(
@@ -244,8 +325,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 18),
                 decoration: BoxDecoration(
-                  color:
-                  tripStarted ? Colors.red : const Color(0xFF00BFA6),
+                  color: tripStarted ? Colors.red : const Color(0xFF00BFA6),
                   borderRadius: BorderRadius.circular(18),
                 ),
                 child: Center(
@@ -267,7 +347,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
   }
 
   // ---------------- UI HELPERS ----------------
-
   Widget _infoCard({
     required String title,
     required List<Widget> children,
@@ -289,13 +368,9 @@ class _DriverHomePageState extends State<DriverHomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            Text(title,
+                style:
+                const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
             const SizedBox(height: 12),
             ...children,
           ],
@@ -364,10 +439,7 @@ class _statusRow extends StatelessWidget {
           Expanded(child: Text(label)),
           Text(
             text,
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.w600,
-            ),
+            style: TextStyle(color: color, fontWeight: FontWeight.w600),
           ),
         ],
       ),
