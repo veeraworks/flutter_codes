@@ -337,8 +337,8 @@ class _StudentSignupPageState extends State<StudentSignupPage> {
 
                         const SizedBox(height: 16),
 
-                        inputBox(nameController, "Student Name", Icons.person),
-                        inputBox(regController, "Register Number", Icons.badge),
+                        inputBox(nameController, "Register Number", Icons.badge),
+                        inputBox(regController, "Student Name", Icons.person),
                         inputBox(phoneController, "Phone Number", Icons.phone,
                             type: TextInputType.phone),
 
