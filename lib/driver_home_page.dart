@@ -4,9 +4,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'temporary_bus_change_page.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import 'temporary_bus_change_page.dart';
 import 'driver_profile_page.dart';
 import 'driver_settings_page.dart';
 import 'issue_reporting_page.dart';
@@ -44,14 +43,16 @@ class _DriverHomePageState extends State<DriverHomePage> {
   // ================= LOAD BUS ID =================
   Future<void> _loadBusId() async {
     final prefs = await SharedPreferences.getInstance();
-    busId = prefs.getString("busId");
+    setState(() {
+      busId = prefs.getString("busId");
+    });
   }
 
   // ---------------- CHECK GPS / INTERNET ----------------
   Future<void> _checkStatuses() async {
-    bool gpsEnabled = await Geolocator.isLocationServiceEnabled();
+    final gpsEnabled = await Geolocator.isLocationServiceEnabled();
     final connectivity = await Connectivity().checkConnectivity();
-    bool netEnabled = connectivity != ConnectivityResult.none;
+    final netEnabled = connectivity != ConnectivityResult.none;
 
     setState(() {
       gpsOn = gpsEnabled;
@@ -63,10 +64,13 @@ class _DriverHomePageState extends State<DriverHomePage> {
   // ================= START GPS TRACKING =================
   Future<void> _startLocationUpdates() async {
     LocationPermission permission = await Geolocator.checkPermission();
+
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
     if (permission == LocationPermission.deniedForever) return;
+
+    positionStream?.cancel(); // safety
 
     positionStream = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
@@ -74,7 +78,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
         distanceFilter: 5,
       ),
     ).listen((position) {
-      if (busId == null) return;
+      if (!tripStarted || busId == null) return;
 
       FirebaseDatabase.instance.ref("buses/$busId").set({
         "lat": position.latitude,
@@ -85,7 +89,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
   }
 
   // ---------------- START / END TRIP ----------------
-  void _toggleTrip() async {
+  Future<void> _toggleTrip() async {
     await _checkStatuses();
 
     if (busId == null) {
@@ -112,26 +116,21 @@ class _DriverHomePageState extends State<DriverHomePage> {
         return;
       }
 
-      // 🔥 FIREBASE: START TRIP
       await FirebaseDatabase.instance
           .ref("busTrips/$busId/status")
           .set("STARTED");
 
-      // 🔥 START GPS
-      await _startLocationUpdates();
-
       setState(() {
         tripStarted = true;
       });
+
+      await _startLocationUpdates();
     } else {
       // ⏹ END TRIP
-
-      // 🔥 FIREBASE: END TRIP
       await FirebaseDatabase.instance
           .ref("busTrips/$busId/status")
           .set("ENDED");
 
-      // 🔥 STOP GPS
       await positionStream?.cancel();
       positionStream = null;
 
@@ -149,15 +148,13 @@ class _DriverHomePageState extends State<DriverHomePage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF6F3F7),
 
-      // ☰ SIMPLE DRIVER MENU
+      // ☰ DRAWER
       drawer: Drawer(
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
             DrawerHeader(
-              decoration: const BoxDecoration(
-                color: Color(0xFF00BFA6),
-              ),
+              decoration: const BoxDecoration(color: Color(0xFF00BFA6)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: const [
@@ -182,59 +179,37 @@ class _DriverHomePageState extends State<DriverHomePage> {
             ListTile(
               leading: const Icon(Icons.person),
               title: const Text("Profile"),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const DriverProfilePage(),
-                  ),
-                );
-              },
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const DriverProfilePage()),
+              ),
             ),
 
-            // TEMPORARY BUS CHANGE
             ListTile(
               leading: const Icon(Icons.swap_horiz, color: Colors.orange),
               title: const Text("Temporary Bus Change"),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const TemporaryBusChangePage(),
-                  ),
-                );
-              },
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const TemporaryBusChangePage()),
+              ),
             ),
-
 
             ListTile(
               leading: const Icon(Icons.report_problem, color: Colors.red),
               title: const Text("Issue Reporting"),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const IssueReportingPage(),
-                  ),
-                );
-              },
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const IssueReportingPage()),
+              ),
             ),
 
             ListTile(
               leading: const Icon(Icons.settings),
               title: const Text("Settings"),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const DriverSettingsPage(),
-                  ),
-                );
-              },
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const DriverSettingsPage()),
+              ),
             ),
           ],
         ),
@@ -280,11 +255,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
                     const SizedBox(height: 4),
                     Text(
                       tripStarted ? 'ON DUTY' : 'OFF DUTY',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
+                      style: const TextStyle(color: Colors.white70),
                     ),
                   ],
                 ),
@@ -359,18 +330,15 @@ class _DriverHomePageState extends State<DriverHomePage> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 10,
-            ),
+            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10),
           ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(title,
-                style:
-                const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                style: const TextStyle(
+                    fontSize: 18, fontWeight: FontWeight.w600)),
             const SizedBox(height: 12),
             ...children,
           ],
@@ -437,10 +405,9 @@ class _statusRow extends StatelessWidget {
           Icon(icon, color: color, size: 20),
           const SizedBox(width: 10),
           Expanded(child: Text(label)),
-          Text(
-            text,
-            style: TextStyle(color: color, fontWeight: FontWeight.w600),
-          ),
+          Text(text,
+              style:
+              TextStyle(color: color, fontWeight: FontWeight.w600)),
         ],
       ),
     );
