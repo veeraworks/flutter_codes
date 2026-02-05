@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'driver_home_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class DriverOtpPage extends StatefulWidget {
   final String phoneNumber;
@@ -23,9 +24,22 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
     }
 
     setState(() => isLoading = true);
+
+    // ⏳ Simulate OTP verification
     await Future.delayed(const Duration(seconds: 1));
 
-    // ✅ Later replace with Firebase OTP verification
+    // ✅ SAVE DRIVER + BUS DATA (CRITICAL FIX)
+    final prefs = await SharedPreferences.getInstance();
+
+    // 🔴 These values can later come from backend
+    await prefs.setString("driverName", "Driver One");
+    await prefs.setString("busId", "9");
+    await prefs.setString("routeName", "Madambakkam");
+    await prefs.setString("shift", "Morning");
+
+    setState(() => isLoading = false);
+
+    // ✅ GO TO DRIVER HOME
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (_) => const DriverHomePage()),
@@ -149,7 +163,9 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
                         borderRadius: BorderRadius.circular(30),
                       ),
                     ),
-                    child: const Text(
+                    child: isLoading
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : const Text(
                       "SUBMIT",
                       style: TextStyle(
                         color: Colors.white,
