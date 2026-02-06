@@ -4,8 +4,6 @@ import 'package:geolocator/geolocator.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'driver_full_map_page.dart';
 
 import 'temporary_bus_change_page.dart';
 import 'driver_profile_page.dart';
@@ -29,11 +27,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
   String? busId;
   StreamSubscription<Position>? positionStream;
 
-  // 🗺️ MAP STATE
-  GoogleMapController? _mapController;
-  Marker? _driverMarker;
-  LatLng _currentLatLng = const LatLng(13.0827, 80.2707); // default
-
   @override
   void initState() {
     super.initState();
@@ -46,9 +39,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
     positionStream?.cancel();
     super.dispose();
   }
-  // 🧵 ROUTE POLYLINE STATE
-  final List<LatLng> _routePoints = [];
-  Set<Polyline> _polylines = {};
 
   // ================= LOAD BUS ID =================
   Future<void> _loadBusId() async {
@@ -58,7 +48,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     });
   }
 
-  // ---------------- CHECK GPS / INTERNET ----------------------
+  // ---------------- CHECK GPS / INTERNET ----------------
   Future<void> _checkStatuses() async {
     final gpsEnabled = await Geolocator.isLocationServiceEnabled();
     final connectivity = await Connectivity().checkConnectivity();
@@ -80,7 +70,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     }
     if (permission == LocationPermission.deniedForever) return;
 
-    positionStream?.cancel();
+    positionStream?.cancel(); // safety
 
     positionStream = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
@@ -90,53 +80,18 @@ class _DriverHomePageState extends State<DriverHomePage> {
     ).listen((position) {
       if (!tripStarted || busId == null) return;
 
-      final latLng = LatLng(position.latitude, position.longitude);
-
-      setState(() {
-        // 📍 update marker
-        _driverMarker = Marker(
-          markerId: const MarkerId("driver"),
-          position: latLng,
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueGreen,
-          ),
-        );
-
-        // 📌 add route point
-        _routePoints.add(latLng);
-
-        // 🧵 draw polyline
-        _polylines.clear();
-        _polylines.add(
-          Polyline(
-            polylineId: const PolylineId("route"),
-            points: _routePoints,
-            color: Colors.blue,
-            width: 5,
-          ),
-        );
-      });
-
-      // 🎥 move camera
-      _mapController?.animateCamera(
-        CameraUpdate.newLatLng(latLng),
-      );
-
-      // 🔥 Firebase update
       FirebaseDatabase.instance.ref("buses/$busId").set({
         "lat": position.latitude,
         "lng": position.longitude,
         "updatedAt": ServerValue.timestamp,
       });
     });
-
   }
 
   // ---------------- START / END TRIP ----------------
   Future<void> _toggleTrip() async {
     await _checkStatuses();
 
-    // ❌ Bus ID missing
     if (busId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Bus ID not found")),
@@ -144,9 +99,8 @@ class _DriverHomePageState extends State<DriverHomePage> {
       return;
     }
 
-    // ================= START TRIP =================
     if (!tripStarted) {
-      // GPS check
+      // ▶ START TRIP
       if (!gpsOn) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Please enable GPS")),
@@ -155,7 +109,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
         return;
       }
 
-      // Internet check
       if (!internetOn) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Please enable Internet")),
@@ -163,42 +116,31 @@ class _DriverHomePageState extends State<DriverHomePage> {
         return;
       }
 
-      // 🔥 Firebase: Trip started
       await FirebaseDatabase.instance
           .ref("busTrips/$busId/status")
           .set("STARTED");
 
       setState(() {
         tripStarted = true;
-        _routePoints.clear();   // ✅ start fresh route
-        _polylines.clear();
       });
 
-      // ▶ Start GPS tracking
       await _startLocationUpdates();
-
-    }
-    // ================= END TRIP =================
-    else {
-      // 🔥 Firebase: Trip ended
+    } else {
+      // ⏹ END TRIP
       await FirebaseDatabase.instance
           .ref("busTrips/$busId/status")
           .set("ENDED");
 
-      // ⛔ Stop GPS tracking
       await positionStream?.cancel();
       positionStream = null;
 
       setState(() {
         tripStarted = false;
-        _routePoints.clear();   // ✅ clear route
-        _polylines.clear();     // ✅ remove polyline from map
       });
     }
 
     await _checkStatuses();
   }
-
 
   // ---------------- UI ----------------
   @override
@@ -206,15 +148,16 @@ class _DriverHomePageState extends State<DriverHomePage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF6F3F7),
 
+      // ☰ DRAWER
       drawer: Drawer(
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
-            const DrawerHeader(
-              decoration: BoxDecoration(color: Color(0xFF00BFA6)),
+            DrawerHeader(
+              decoration: const BoxDecoration(color: Color(0xFF00BFA6)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+                children: const [
                   CircleAvatar(
                     radius: 28,
                     backgroundColor: Colors.white,
@@ -241,6 +184,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
                 MaterialPageRoute(builder: (_) => const DriverProfilePage()),
               ),
             ),
+
             ListTile(
               leading: const Icon(Icons.swap_horiz, color: Colors.orange),
               title: const Text("Temporary Bus Change"),
@@ -249,6 +193,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
                 MaterialPageRoute(builder: (_) => const TemporaryBusChangePage()),
               ),
             ),
+
             ListTile(
               leading: const Icon(Icons.report_problem, color: Colors.red),
               title: const Text("Issue Reporting"),
@@ -257,6 +202,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
                 MaterialPageRoute(builder: (_) => const IssueReportingPage()),
               ),
             ),
+
             ListTile(
               leading: const Icon(Icons.settings),
               title: const Text("Settings"),
@@ -271,7 +217,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
       body: Column(
         children: [
-          // HEADER (unchanged)
+          // HEADER
           Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(20, 44, 20, 30),
@@ -306,6 +252,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
                       'Driver Dashboard',
                       style: TextStyle(color: Colors.white, fontSize: 22),
                     ),
+                    const SizedBox(height: 4),
                     Text(
                       tripStarted ? 'ON DUTY' : 'OFF DUTY',
                       style: const TextStyle(color: Colors.white70),
@@ -338,60 +285,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
             ],
           ),
 
-          // 🗺️ MAP (ONLY WHEN TRIP STARTED)
-          if (tripStarted)
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: Stack(
-                    children: [
-
-                      // 🗺️ GOOGLE MAP
-                      SizedBox(
-                        height: 250,
-                        child: GoogleMap(
-                          initialCameraPosition: CameraPosition(
-                            target: _currentLatLng,
-                            zoom: 16,
-                          ),
-                          onMapCreated: (controller) {
-                            _mapController = controller;
-                          },
-                          myLocationEnabled: true,
-                          myLocationButtonEnabled: true,
-                          markers: _driverMarker != null
-                              ? {_driverMarker!}
-                              : {},
-                          polylines: _polylines,
-                        ),
-                      ),
-
-                      // 👆 TAP DETECTOR LAYER
-                      Positioned.fill(
-                        child: Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => DriverFullMapPage(
-                                    currentLatLng: _currentLatLng,
-                                    marker: _driverMarker,
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+          const SizedBox(height: 24),
 
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -435,6 +329,9 @@ class _DriverHomePageState extends State<DriverHomePage> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -460,13 +357,16 @@ class _infoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(label, style: const TextStyle(color: Colors.black54)),
-        Text(value,
-            style: const TextStyle(fontWeight: FontWeight.w500)),
-      ],
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(color: Colors.black54)),
+          Text(value,
+              style: const TextStyle(fontWeight: FontWeight.w500)),
+        ],
+      ),
     );
   }
 }

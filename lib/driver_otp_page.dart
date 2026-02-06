@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'driver_home_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class DriverOtpPage extends StatefulWidget {
   final String phoneNumber;
@@ -15,7 +15,7 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
   final TextEditingController otpController = TextEditingController();
   bool isLoading = false;
 
-  Future<void> submitOtp() async {
+  void submitOtp() async {
     if (otpController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Please enter OTP")),
@@ -25,15 +25,15 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
 
     setState(() => isLoading = true);
 
-    // ⏳ TEMP: simulate OTP verification
+    // ⏳ Simulate OTP verification (TEMPORARY)
     await Future.delayed(const Duration(seconds: 1));
 
-    // ✅ SAVE SESSION DATA
+    // ✅ SAVE DRIVER SESSION DATA (TEMPORARY – NO BACKEND YET)
     final prefs = await SharedPreferences.getInstance();
 
-    // 🔴 TEMP VALUES (until backend is ready)
+    // 🔴 TEMP values (replace with backend later)
     const String driverName = "Driver One";
-    const String busId = "BUS10"; // ⚠️ MUST MATCH FIREBASE NODE
+    const String busId = "BUS10"; // use existing bus like BUS10
     const String routeName = "Madambakkam";
     const String shift = "Morning";
 
@@ -41,13 +41,6 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
     await prefs.setString("busId", busId);
     await prefs.setString("routeName", routeName);
     await prefs.setString("shift", shift);
-
-    // 🔍 DEBUG (VERY IMPORTANT)
-    debugPrint("✅ OTP VERIFIED");
-    debugPrint("✅ SAVED driverName = $driverName");
-    debugPrint("✅ SAVED busId = $busId");
-    debugPrint("✅ SAVED routeName = $routeName");
-    debugPrint("✅ SAVED shift = $shift");
 
     setState(() => isLoading = false);
 
@@ -57,6 +50,7 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
       MaterialPageRoute(builder: (_) => const DriverHomePage()),
     );
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -88,7 +82,8 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // 🔒 ICON
+
+                // 🔒 LOCK ICON
                 Container(
                   width: 64,
                   height: 64,
@@ -136,8 +131,26 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
                     hintText: "Enter OTP",
                     counterText: "",
                     prefixIcon: const Icon(Icons.sms),
+                    filled: true,
+                    fillColor: Colors.white,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(18),
+                      borderSide: const BorderSide(
+                        color: Color(0xFF00BFA6),
+                      ),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(18),
+                      borderSide: const BorderSide(
+                        color: Color(0xFF00C9A7),
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(18),
+                      borderSide: const BorderSide(
+                        color: Color(0xFF00BFA6),
+                        width: 2,
+                      ),
                     ),
                   ),
                 ),
