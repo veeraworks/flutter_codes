@@ -20,33 +20,6 @@ class DriverHomePage extends StatefulWidget {
 }
 
 class _DriverHomePageState extends State<DriverHomePage> {
-
-  void listenForBusArrival(
-      String busId,
-      double stopLat,
-      double stopLng,
-      String stopName,
-      ) {
-    final busRef = FirebaseDatabase.instance.ref('buses/$busId');
-
-    busRef.onValue.listen((event) {
-      if (!event.snapshot.exists) return;
-
-      final data = event.snapshot.value as Map;
-
-      final double busLat = data['lat'];
-      final double busLng = data['lng'];
-
-      final double distance = Geolocator.distanceBetween(
-        busLat,
-        busLng,
-        stopLat,
-        stopLng,
-      );
-
-    });
-  }
-
   bool tripStarted = false;
 
   bool gpsOn = false;
@@ -66,14 +39,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
     super.initState();
     _loadBusId();
     _checkStatuses();
-
-    @override
-    void initState() {
-      super.initState();
-      _loadBusId();
-      _checkStatuses();
-
-    }
   }
 
   @override
