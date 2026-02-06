@@ -5,8 +5,6 @@ import 'driver_login_page.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 
-import 'theme_manager.dart';
-
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(); // 🔥 Firebase starts here
@@ -18,32 +16,18 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: ThemeManager.themeNotifier,
-      builder: (context, currentMode, _) {
-        return MaterialApp(
-          debugShowCheckedModeBanner: false,
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
 
-          themeMode: currentMode, // ✅ controls dark/light
+      // 🌞 DEFAULT LIGHT THEME ONLY
+      theme: ThemeData(
+        brightness: Brightness.light,
+        colorSchemeSeed: const Color(0xFF00C9A7),
+        scaffoldBackgroundColor: Colors.white,
+        useMaterial3: true,
+      ),
 
-          // 🌞 LIGHT THEME
-          theme: ThemeData(
-            brightness: Brightness.light,
-            colorSchemeSeed: const Color(0xFF00C9A7),
-            scaffoldBackgroundColor: Colors.white,
-            useMaterial3: true,
-          ),
-
-          // 🌙 DARK THEME
-          darkTheme: ThemeData(
-            brightness: Brightness.dark,
-            colorSchemeSeed: const Color(0xFF00C9A7),
-            useMaterial3: true,
-          ),
-
-          home: const WelcomePage(),
-        );
-      },
+      home: const WelcomePage(),
     );
   }
 }
@@ -56,7 +40,6 @@ class WelcomePage extends StatefulWidget {
 }
 
 class _WelcomePageState extends State<WelcomePage> {
-
   @override
   void initState() {
     super.initState();
@@ -96,7 +79,8 @@ class _WelcomePageState extends State<WelcomePage> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => const StudentLoginPage(),
+                                builder: (context) =>
+                                const StudentLoginPage(),
                               ),
                             );
                           },
@@ -129,7 +113,8 @@ class _WelcomePageState extends State<WelcomePage> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => const DriverLoginPage(),
+                                builder: (context) =>
+                                const DriverLoginPage(),
                               ),
                             );
                           },

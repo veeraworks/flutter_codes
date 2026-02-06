@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
-import 'driver_home_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'driver_home_page.dart';
 
 class DriverOtpPage extends StatefulWidget {
   final String phoneNumber;
 
-  const DriverOtpPage({super.key, required this.phoneNumber});
+  const DriverOtpPage({
+    super.key,
+    required this.phoneNumber,
+  });
 
   @override
   State<DriverOtpPage> createState() => _DriverOtpPageState();
@@ -15,7 +18,13 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
   final TextEditingController otpController = TextEditingController();
   bool isLoading = false;
 
-  void submitOtp() async {
+  @override
+  void dispose() {
+    otpController.dispose();
+    super.dispose();
+  }
+
+  Future<void> submitOtp() async {
     if (otpController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Please enter OTP")),
@@ -25,15 +34,12 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
 
     setState(() => isLoading = true);
 
-    // ⏳ Simulate OTP verification (TEMPORARY)
     await Future.delayed(const Duration(seconds: 1));
 
-    // ✅ SAVE DRIVER SESSION DATA (TEMPORARY – NO BACKEND YET)
     final prefs = await SharedPreferences.getInstance();
 
-    // 🔴 TEMP values (replace with backend later)
     const String driverName = "Driver One";
-    const String busId = "BUS10"; // use existing bus like BUS10
+    const String busId = "BUS10";
     const String routeName = "Madambakkam";
     const String shift = "Morning";
 
@@ -44,13 +50,15 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
 
     setState(() => isLoading = false);
 
-    // ✅ NAVIGATE TO DRIVER HOME
+    if (!mounted) return;
+
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (_) => const DriverHomePage()),
+      MaterialPageRoute(
+        builder: (_) => const DriverHomePage(),
+      ),
     );
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -67,7 +75,7 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Container(
             width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(22, 28, 22, 28),
+            padding: const EdgeInsets.all(28),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(22),
@@ -82,8 +90,6 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-
-                // 🔒 LOCK ICON
                 Container(
                   width: 64,
                   height: 64,
@@ -122,7 +128,6 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
 
                 const SizedBox(height: 22),
 
-                // 🔢 OTP FIELD
                 TextField(
                   controller: otpController,
                   keyboardType: TextInputType.number,
@@ -131,19 +136,13 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
                     hintText: "Enter OTP",
                     counterText: "",
                     prefixIcon: const Icon(Icons.sms),
-                    filled: true,
-                    fillColor: Colors.white,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(18),
-                      borderSide: const BorderSide(
-                        color: Color(0xFF00BFA6),
-                      ),
+                      borderSide: const BorderSide(color: Color(0xFF00BFA6)),
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(18),
-                      borderSide: const BorderSide(
-                        color: Color(0xFF00C9A7),
-                      ),
+                      borderSide: const BorderSide(color: Color(0xFF00C9A7)),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(18),
@@ -157,7 +156,6 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
 
                 const SizedBox(height: 22),
 
-                // ✅ SUBMIT BUTTON
                 SizedBox(
                   width: double.infinity,
                   height: 52,
