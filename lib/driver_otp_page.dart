@@ -25,26 +25,32 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
 
     setState(() => isLoading = true);
 
-    // ⏳ Simulate OTP verification
+    // ⏳ Simulate OTP verification (TEMPORARY)
     await Future.delayed(const Duration(seconds: 1));
 
-    // ✅ SAVE DRIVER + BUS DATA (CRITICAL FIX)
+    // ✅ SAVE DRIVER SESSION DATA (TEMPORARY – NO BACKEND YET)
     final prefs = await SharedPreferences.getInstance();
 
-    // 🔴 These values can later come from backend
-    await prefs.setString("driverName", "Driver One");
-    await prefs.setString("busId", "9");
-    await prefs.setString("routeName", "Madambakkam");
-    await prefs.setString("shift", "Morning");
+    // 🔴 TEMP values (replace with backend later)
+    const String driverName = "Driver One";
+    const String busId = "BUS10"; // use existing bus like BUS10
+    const String routeName = "Madambakkam";
+    const String shift = "Morning";
+
+    await prefs.setString("driverName", driverName);
+    await prefs.setString("busId", busId);
+    await prefs.setString("routeName", routeName);
+    await prefs.setString("shift", shift);
 
     setState(() => isLoading = false);
 
-    // ✅ GO TO DRIVER HOME
+    // ✅ NAVIGATE TO DRIVER HOME
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (_) => const DriverHomePage()),
     );
   }
+
 
   @override
   Widget build(BuildContext context) {

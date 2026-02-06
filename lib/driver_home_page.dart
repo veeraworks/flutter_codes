@@ -5,7 +5,6 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'driver_full_map_page.dart';
 
 import 'temporary_bus_change_page.dart';
@@ -21,36 +20,6 @@ class DriverHomePage extends StatefulWidget {
 }
 
 class _DriverHomePageState extends State<DriverHomePage> {
-
-  final FlutterLocalNotificationsPlugin notifications =
-  FlutterLocalNotificationsPlugin();
-
-  void initNotifications() async {
-    const androidSettings =
-    AndroidInitializationSettings('@mipmap/ic_launcher');
-
-    const settings = InitializationSettings(android: androidSettings);
-
-    await notifications.initialize(settings);
-  }
-
-  Future<void> showBusAlert(String stopName) async {
-    const androidDetails = AndroidNotificationDetails(
-      'bus_alerts',
-      'Bus Alerts',
-      importance: Importance.high,
-      priority: Priority.high,
-    );
-
-    const details = NotificationDetails(android: androidDetails);
-
-    await notifications.show(
-      0,
-      '🚌 Bus Arriving',
-      'Your bus is near $stopName',
-      details,
-    );
-  }
 
   void listenForBusArrival(
       String busId,
@@ -75,9 +44,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
         stopLng,
       );
 
-      if (distance <= 300) {
-        showBusAlert(stopName);
-      }
     });
   }
 
@@ -107,14 +73,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
       _loadBusId();
       _checkStatuses();
 
-      initNotifications();// 🔔 NEW: notification init
-
-      listenForBusArrival( // 🔔 NEW: listen for bus arrival
-        "BUS10",        // busId
-        12.9516,        // stop latitude
-        80.1462,        // stop longitude
-        "Chrompet",     // stop name
-      );
     }
   }
 
