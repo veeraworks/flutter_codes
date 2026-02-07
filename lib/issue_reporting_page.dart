@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class IssueReportingPage extends StatefulWidget {
   const IssueReportingPage({super.key});
@@ -11,39 +13,35 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
   String? activeIssue;
 
   final List<Map<String, dynamic>> issues = [
-    {
-      "title": "Bus Breakdown",
-      "icon": Icons.build,
-      "color": Colors.red,
-    },
-    {
-      "title": "Accident",
-      "icon": Icons.car_crash,
-      "color": Colors.deepOrange,
-    },
-    {
-      "title": "Tyre Puncture",
-      "icon": Icons.tire_repair,
-      "color": Colors.orange,
-    },
-    {
-      "title": "Fuel Issue",
-      "icon": Icons.local_gas_station,
-      "color": Colors.amber,
-    },
-    {
-      "title": "Heavy Traffic",
-      "icon": Icons.traffic,
-      "color": Colors.blue,
-    },
-    {
-      "title": "Delay",
-      "icon": Icons.schedule,
-      "color": Colors.purple,
-    },
+    {"title": "Bus Breakdown", "icon": Icons.build, "color": Colors.red},
+    {"title": "Accident", "icon": Icons.car_crash, "color": Colors.deepOrange},
+    {"title": "Tyre Puncture", "icon": Icons.tire_repair, "color": Colors.orange},
+    {"title": "Fuel Issue", "icon": Icons.local_gas_station, "color": Colors.amber},
+    {"title": "Heavy Traffic", "icon": Icons.traffic, "color": Colors.blue},
+    {"title": "Delay", "icon": Icons.schedule, "color": Colors.purple},
   ];
 
-  void reportIssue(String issue) {
+  // ================= REPORT ISSUE =================
+  Future<void> reportIssue(String issue) async {
+    final prefs = await SharedPreferences.getInstance();
+    final busId = prefs.getString("busId");
+
+    if (busId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Bus ID not found")),
+      );
+      return;
+    }
+
+    await FirebaseDatabase.instance
+        .ref("busIssues/$busId")
+        .set({
+      "issueType": issue,
+      "status": "ACTIVE",
+      "reportedAt": ServerValue.timestamp,
+      "clearedAt": null,
+    });
+
     setState(() {
       activeIssue = issue;
     });
@@ -56,7 +54,20 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
     );
   }
 
-  void clearIssue() {
+  // ================= CLEAR ISSUE =================
+  Future<void> clearIssue() async {
+    final prefs = await SharedPreferences.getInstance();
+    final busId = prefs.getString("busId");
+
+    if (busId == null) return;
+
+    await FirebaseDatabase.instance
+        .ref("busIssues/$busId")
+        .update({
+      "status": "CLEARED",
+      "clearedAt": ServerValue.timestamp,
+    });
+
     setState(() {
       activeIssue = null;
     });
@@ -69,6 +80,7 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
     );
   }
 
+  // ================= UI =================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -166,8 +178,7 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
               ),
               itemBuilder: (context, index) {
                 final issue = issues[index];
-                final bool isDisabled =
-                    activeIssue != null;
+                final bool isDisabled = activeIssue != null;
 
                 return GestureDetector(
                   onTap: isDisabled
@@ -178,19 +189,16 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
                     child: Container(
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius:
-                        BorderRadius.circular(18),
+                        borderRadius: BorderRadius.circular(18),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black
-                                .withOpacity(0.05),
+                            color: Colors.black.withOpacity(0.05),
                             blurRadius: 10,
                           ),
                         ],
                       ),
                       child: Column(
-                        mainAxisAlignment:
-                        MainAxisAlignment.center,
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
                             issue["icon"],
