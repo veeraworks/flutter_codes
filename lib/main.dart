@@ -92,7 +92,7 @@ class _WelcomePageState extends State<WelcomePage> {
                             elevation: 0,
                           ),
                           child: const Text(
-                            'STUDENT ',
+                            'STUDENT LOGIN',
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w600,
