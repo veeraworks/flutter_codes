@@ -17,11 +17,18 @@ class DriverHomePage extends StatefulWidget {
 
   @override
   State<DriverHomePage> createState() => _DriverHomePageState();
+
 }
 
 class _DriverHomePageState extends State<DriverHomePage> {
   bool tripStarted = false;
   bool _initialized = false;
+  // 🔑 BUS INFO STATE (ADDED)
+  String busNumber = "-";
+  String routeName = "-";
+  String shift = "-";
+  bool isTempBusActive = false;
+
 
   bool gpsOn = false;
   bool internetOn = false;
@@ -33,6 +40,8 @@ class _DriverHomePageState extends State<DriverHomePage> {
   // 🗺️ MAP STATE
   GoogleMapController? _mapController;
   Marker? _driverMarker;
+  Marker? _startMarker;
+  Marker? _endMarker;
   LatLng _currentLatLng = const LatLng(13.0827, 80.2707); // default
 
   // 🧵 ROUTE POLYLINE STATE
@@ -52,6 +61,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     await prefs.setBool("trackingActive", false);
 
     await _loadBusId();
+    await _loadBusInfo();
     await _checkStatuses();
 
     setState(() {
@@ -72,6 +82,18 @@ class _DriverHomePageState extends State<DriverHomePage> {
       busId = prefs.getString("busId");
     });
   }
+// ================= LOAD BUS INFO (ADDED) =================
+  Future<void> _loadBusInfo() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    setState(() {
+      busNumber = prefs.getString("busNumber") ?? "-";
+      routeName = prefs.getString("routeName") ?? "-";
+      shift = prefs.getString("shift") ?? "-";
+      isTempBusActive = prefs.getBool("isTempBusActive") ?? false;
+    });
+    print("HOME RELOAD → busNumber=$busNumber, isTempBusActive=$isTempBusActive");
+  }
 
   // ---------------- CHECK GPS / INTERNET ---------------------------------------
   Future<void> _checkStatuses() async {
@@ -89,15 +111,23 @@ class _DriverHomePageState extends State<DriverHomePage> {
     });
   }
 
-
   // ================= START GPS TRACKING ==================================
   Future<void> _startLocationUpdates() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      print("GPS SERVICE DISABLED");
+      return;
+    }
     LocationPermission permission = await Geolocator.checkPermission();
 
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
-    if (permission == LocationPermission.deniedForever) return;
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      print("LOCATION PERMISSION DENIED");
+      return;
+    }
 
     positionStream?.cancel();
 
@@ -106,8 +136,12 @@ class _DriverHomePageState extends State<DriverHomePage> {
         accuracy: LocationAccuracy.high,
         distanceFilter: 5,
       ),
-    ).listen((position) {
-      if (!tripStarted) return; // <-- allow tracking UI even if busId is null
+    ).listen((position) {print("GPS UPDATE → ${position.latitude}, ${position.longitude}");
+
+    if (!tripStarted) {
+      print("GPS running but trip not started");
+      return;
+    }
 
       final latLng = LatLng(position.latitude, position.longitude);
 
@@ -123,6 +157,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
         );
 
         _routePoints.add(latLng);
+        print("Route points now = ${_routePoints.length}");
 
         _polylines.clear();
         _polylines.add(
@@ -133,6 +168,17 @@ class _DriverHomePageState extends State<DriverHomePage> {
             width: 5,
           ),
         );
+        _polylines = {
+          Polyline(
+            polylineId: const PolylineId("route"),
+            points: _routePoints,
+            color: Colors.blue,
+            width: 6,
+            jointType: JointType.round,
+            startCap: Cap.roundCap,
+            endCap: Cap.roundCap,
+          ),
+        };
       });
 
       _mapController?.animateCamera(
@@ -182,6 +228,13 @@ class _DriverHomePageState extends State<DriverHomePage> {
         tripStarted = true;
         _routePoints.clear();
         _polylines.clear();
+        _startMarker = Marker(
+          markerId: const MarkerId("start"),
+          position: _currentLatLng,
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueGreen,
+          ),
+        );
       });
 
       SharedPreferences.getInstance().then((prefs) {
@@ -208,6 +261,15 @@ class _DriverHomePageState extends State<DriverHomePage> {
       // End trip: cancel stream and update U I immediately
       await positionStream?.cancel();
       positionStream = null;
+      if (_routePoints.isNotEmpty) {
+        _endMarker = Marker(
+          markerId: const MarkerId("end"),
+          position: _routePoints.last,
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueRed,
+          ),
+        );
+      }
 
       setState(() {
         tripStarted = false;
@@ -228,6 +290,27 @@ class _DriverHomePageState extends State<DriverHomePage> {
           print("Failed to set ENDED status: $e");
         });
       }
+      // 🔥 AUTO CLEAR TEMP BUS ON END TRIP
+      final prefs = await SharedPreferences.getInstance();
+      final bool isTempActive = prefs.getBool("isTempBusActive") ?? false;
+
+      if (isTempActive) {
+        await prefs.setBool("isTempBusActive", false);
+
+        // optional backend update
+        if (busId != null) {
+          FirebaseDatabase.instance
+              .ref("temporaryBus/$busId")
+              .update({
+            "active": false,
+            "updatedAt": ServerValue.timestamp,
+          });
+        }
+
+        // reload home page bus info
+        await _loadBusInfo();
+      }
+
     }
 
     await _checkStatuses();
@@ -277,11 +360,24 @@ class _DriverHomePageState extends State<DriverHomePage> {
             ListTile(
               leading: const Icon(Icons.swap_horiz, color: Colors.orange),
               title: const Text("Temporary Bus Change"),
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const TemporaryBusChangePage()),
-              ),
+              onTap: () async {
+                Navigator.pop(context); // close drawer first
+
+                final bool? updated = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const TemporaryBusChangePage(),
+                  ),
+                );
+
+                // Refresh bus info if user applied or cleared changes
+                if (updated == true) {
+                  await _loadBusInfo();
+                  await _checkStatuses();
+                }
+              },
             ),
+
             ListTile(
               leading: const Icon(Icons.report_problem, color: Colors.red),
               title: const Text("Issue Reporting"),
@@ -353,10 +449,22 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
           _infoCard(
             title: 'Bus Information',
-            children: const [
-              _infoRow('Route', 'Madambakkam'),
-              _infoRow('Bus Number', '9'),
-              _infoRow('Shift', 'Morning'),
+            children: [
+              _infoRow('Route', routeName),
+              _infoRow('Bus Number', busNumber),
+              _infoRow('Shift', shift),
+
+              if (isTempBusActive)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    "TEMPORARY BUS ACTIVE",
+                    style: const TextStyle(
+                      color: Colors.orange,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
             ],
           ),
 
@@ -391,9 +499,11 @@ class _DriverHomePageState extends State<DriverHomePage> {
                           },
                           myLocationEnabled: true,
                           myLocationButtonEnabled: true,
-                          markers: _driverMarker != null
-                              ? {_driverMarker!}
-                              : {},
+                          markers: {
+                            if (_driverMarker != null) _driverMarker!,
+                            if (_startMarker != null) _startMarker!,
+                            if (_endMarker != null) _endMarker!,
+                          },
                           polylines: _polylines,
                         ),
                       ),
@@ -402,12 +512,17 @@ class _DriverHomePageState extends State<DriverHomePage> {
                           color: Colors.transparent,
                           child: InkWell(
                             onTap: () {
+                              print("Route points count = ${_routePoints.length}");
+
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                   builder: (_) => DriverFullMapPage(
                                     currentLatLng: _currentLatLng,
                                     marker: _driverMarker,
+
+                                    // 🔴 THIS LINE IS MANDATORY
+                                    routePoints: List.from(_routePoints),
                                   ),
                                 ),
                               );

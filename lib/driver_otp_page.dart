@@ -48,6 +48,11 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
     await prefs.setString("routeName", routeName);
     await prefs.setString("shift", shift);
 
+    // 🔒 ORIGINAL / BASE BUS INFO (IMPORTANT)
+    await prefs.setString("originalBusNumber", busId); // BUS10
+    await prefs.setString("busNumber", busId);         // current displayed bus
+    await prefs.setBool("isTempBusActive", false);     // reset temp state
+
     setState(() => isLoading = false);
 
     if (!mounted) return;
