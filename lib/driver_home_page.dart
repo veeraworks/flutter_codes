@@ -47,8 +47,13 @@ class _DriverHomePageState extends State<DriverHomePage> {
   }
 
   Future<void> _initialize() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.setBool("trackingActive", false);
+
     await _loadBusId();
     await _checkStatuses();
+
     setState(() {
       _initialized = true;
     });
@@ -60,7 +65,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     super.dispose();
   }
 
-  // ================= LOAD BUS ID =================
+  // ================= LOAD BUS ID ====================================
   Future<void> _loadBusId() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -68,7 +73,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     });
   }
 
-  // ---------------- CHECK GPS / INTERNET ----------------------
+  // ---------------- CHECK GPS / INTERNET ---------------------------------------
   Future<void> _checkStatuses() async {
     final gpsEnabled = await Geolocator.isLocationServiceEnabled();
 
@@ -85,7 +90,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
   }
 
 
-  // ================= START GPS TRACKING =================
+  // ================= START GPS TRACKING ==================================
   Future<void> _startLocationUpdates() async {
     LocationPermission permission = await Geolocator.checkPermission();
 
@@ -148,7 +153,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     });
   }
 
-  // ---------------- START / END TRIP ----------------
+  // ---------------- START / END TRIP --------------------------------------
   Future<void> _toggleTrip() async {
     await _checkStatuses();
 
@@ -179,6 +184,10 @@ class _DriverHomePageState extends State<DriverHomePage> {
         _polylines.clear();
       });
 
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setBool("trackingActive", true);
+      });
+
       // Start location updates without blocking the UI (don't await)
       _startLocationUpdates();
 
@@ -196,7 +205,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
         );
       }
     } else {
-      // End trip: cancel stream and update UI immediately
+      // End trip: cancel stream and update U I immediately
       await positionStream?.cancel();
       positionStream = null;
 
@@ -204,6 +213,10 @@ class _DriverHomePageState extends State<DriverHomePage> {
         tripStarted = false;
         _routePoints.clear();
         _polylines.clear();
+      });
+
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setBool("trackingActive", false);
       });
 
       // Update Firebase status non-blocking if busId present
