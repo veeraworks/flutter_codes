@@ -4,10 +4,12 @@ import 'driver_home_page.dart';
 
 class DriverOtpPage extends StatefulWidget {
   final String phoneNumber;
+  final String driverName;
 
   const DriverOtpPage({
     super.key,
     required this.phoneNumber,
+    required this.driverName,
   });
 
   @override
@@ -34,24 +36,22 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
 
     setState(() => isLoading = true);
 
+    // ⏳ Simulate OTP verification (Firebase Auth will replace this later)
     await Future.delayed(const Duration(seconds: 1));
 
     final prefs = await SharedPreferences.getInstance();
 
-    const String driverName = "Driver One";
-    const String busId = "BUS10";
-    const String routeName = "Madambakkam";
-    const String shift = "Morning";
+    // ✅ SAVE REAL VALUES (NO HARDCODE)
+    await prefs.setString("driverName", widget.driverName);
+    await prefs.setString("phoneNumber", widget.phoneNumber);
 
-    await prefs.setString("driverName", driverName);
-    await prefs.setString("busId", busId);
-    await prefs.setString("routeName", routeName);
-    await prefs.setString("shift", shift);
+    // ⚠️ Temporary defaults (until Firestore mapping is enforced)
+    await prefs.setString("originalBus", "9");
+    await prefs.setString("originalRoute", "Madambakkam");
+    await prefs.setString("shift", "Morning");
 
-    // 🔒 ORIGINAL / BASE BUS INFO (IMPORTANT)
-    await prefs.setString("originalBusNumber", busId); // BUS10
-    await prefs.setString("busNumber", busId);         // current displayed bus
-    await prefs.setBool("isTempBusActive", false);     // reset temp state
+    // Reset temporary-bus flags on fresh login
+    await prefs.setBool("isTemporaryApplied", false);
 
     setState(() => isLoading = false);
 
@@ -108,9 +108,7 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
                     color: Color(0xFF00BFA6),
                   ),
                 ),
-
                 const SizedBox(height: 20),
-
                 const Text(
                   "ENTER OTP",
                   style: TextStyle(
@@ -120,9 +118,7 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
                     color: Color(0xFF00BFA6),
                   ),
                 ),
-
                 const SizedBox(height: 6),
-
                 Text(
                   "OTP sent to ${widget.phoneNumber}",
                   style: const TextStyle(
@@ -130,9 +126,7 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
                     color: Colors.black54,
                   ),
                 ),
-
                 const SizedBox(height: 22),
-
                 TextField(
                   controller: otpController,
                   keyboardType: TextInputType.number,
@@ -143,24 +137,10 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
                     prefixIcon: const Icon(Icons.sms),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(18),
-                      borderSide: const BorderSide(color: Color(0xFF00BFA6)),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(18),
-                      borderSide: const BorderSide(color: Color(0xFF00C9A7)),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(18),
-                      borderSide: const BorderSide(
-                        color: Color(0xFF00BFA6),
-                        width: 2,
-                      ),
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 22),
-
                 SizedBox(
                   width: double.infinity,
                   height: 52,
