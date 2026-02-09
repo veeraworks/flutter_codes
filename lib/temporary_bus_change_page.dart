@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class TemporaryBusChangePage extends StatefulWidget {
@@ -14,8 +15,8 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
 
   String currentBus = "Not Assigned";
   String currentRoute = "Madambakkam";
-
   String selectedRoute = "Madambakkam";
+  bool isTemporaryApplied = false; // Track if temporary change is active
 
   final List<String> routes = [
     "Madambakkam",
@@ -25,6 +26,10 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
     "Tambaram",
     "Chengalpattu",
   ];
+
+  // Store original values for reset
+  String? originalBus;
+  String? originalRoute;
 
   @override
   void initState() {
@@ -40,13 +45,28 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
       currentBus = prefs.getString("busNumber") ?? "9";
       currentRoute = prefs.getString("route") ?? "Madambakkam";
       selectedRoute = currentRoute;
+      originalBus = prefs.getString("originalBus") ?? currentBus;
+      originalRoute = prefs.getString("originalRoute") ?? currentRoute;
+      isTemporaryApplied = prefs.getBool("isTemporaryApplied") ?? false;
     });
   }
 
   // 🔹 Apply temporary bus + route change
   Future<void> _applyTempChange() async {
     final prefs = await SharedPreferences.getInstance();
+    final String? busId = prefs.getString("busId");
 
+    print("🔥 APPLY TEMP BUS CLICKED");
+    print("🔥 busId = $busId");
+
+    if (busId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Bus ID not found")),
+      );
+      return;
+    }
+
+    // ---------- SAVE TEMP DATA LOCALLY ----------
     if (busController.text.trim().isNotEmpty) {
       await prefs.setString("busNumber", busController.text.trim());
       currentBus = busController.text.trim();
@@ -55,15 +75,81 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
     await prefs.setString("route", selectedRoute);
     currentRoute = selectedRoute;
 
-    busController.clear();
+    // ✅ SET FLAG TO TRUE so "Clear" button appears
+    await prefs.setBool("isTemporaryApplied", true);
 
-    setState(() {});
+    // ---------- BACKEND SYNC ----------
+    await FirebaseDatabase.instance
+        .ref("temporaryBus/$busId")
+        .set({
+      "active": true,
+      "tempBusNumber": currentBus,
+      "tempRoute": currentRoute,
+      "updatedAt": ServerValue.timestamp,
+    }).then((_) {
+      print("✅ TEMP BUS WRITTEN TO FIREBASE");
+    }).catchError((e) {
+      print("❌ FIREBASE ERROR: $e");
+    });
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text("Temporary bus & route updated"),
-      ),
+      const SnackBar(content: Text("Temporary bus applied")),
     );
+
+    // Update UI to show "Clear" button
+    setState(() {
+      isTemporaryApplied = true;
+    });
+
+    // Navigate back to home page and notify to reload
+    if (mounted) {
+      Navigator.pop(context, true);
+    }
+  }
+
+  // 🔹 Clear temporary change — revert to original
+  Future<void> _clearTempChange() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? busId = prefs.getString("busId");
+
+    if (busId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Bus ID not found")),
+      );
+      return;
+    }
+
+    // ---------- LOCAL RESET ----------
+    final String originalBus =
+        prefs.getString("originalBus") ?? "9";
+    final String originalRoute =
+        prefs.getString("originalRoute") ?? "Madambakkam";
+
+    await prefs.setString("busNumber", originalBus);
+    await prefs.setString("route", originalRoute);
+    await prefs.setBool("isTemporaryApplied", false);
+
+    // ---------- BACKEND UPDATE ----------
+    await FirebaseDatabase.instance
+        .ref("temporaryBus/$busId")
+        .update({
+      "active": false,
+      "clearedAt": ServerValue.timestamp,
+    }).then((_)
+    {
+      print("✅ TEMP BUS CLEARED IN FIREBASE");
+    }).catchError((e)
+    {
+      print("❌ CLEAR TEMP BUS ERROR: $e");
+    });
+
+    // ---------- UI ----------
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Temporary bus cleared")),
+    );
+
+    // Go back & notify home page to reload
+    Navigator.pop(context, true);
   }
 
   @override
@@ -198,6 +284,32 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
                       ),
                     ),
                   ),
+
+                  // Show "Clear Temporary Change" button only if temporary change is applied
+                  if (isTemporaryApplied) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton(
+                        onPressed: _clearTempChange,
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Colors.red),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: const Text(
+                          "Clear Temporary Change",
+                          style: TextStyle(
+                            color: Colors.red,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
