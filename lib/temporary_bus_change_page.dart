@@ -16,20 +16,21 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
   String currentBus = "Not Assigned";
   String currentRoute = "Madambakkam";
   String selectedRoute = "Madambakkam";
-  bool isTemporaryApplied = false; // Track if temporary change is active
+
+  bool isTempActive = false; // 🔥 KEY FLAG
 
   final List<String> routes = [
-    "Madambakkam",
-    "Velachery",
-    "Koyambedu",
     "Ashok Pillar",
-    "Tambaram",
-    "Chengalpattu",
+    "Koyambedu",
+    "Madambakkam"
+    "Nesapakkam",
+    "Madipakkam",
+    "Velachery",
+    "Chengalpet",
+    "Anakaputhur",
+    "Sithalapakkam",
+    "Padappai",
   ];
-
-  // Store original values for reset
-  String? originalBus;
-  String? originalRoute;
 
   @override
   void initState() {
@@ -37,121 +38,127 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
     _loadBusInfo();
   }
 
-  // 🔹 Load current bus & route
+  // ================= LOAD BUS INFO =================
   Future<void> _loadBusInfo() async {
     final prefs = await SharedPreferences.getInstance();
 
     setState(() {
+      isTempActive = prefs.getBool("isTempBusActive") ?? false;
       currentBus = prefs.getString("busNumber") ?? "9";
-      currentRoute = prefs.getString("route") ?? "Madambakkam";
+      currentRoute = prefs.getString("routeName") ?? "Madambakkam";
       selectedRoute = currentRoute;
-      originalBus = prefs.getString("originalBus") ?? currentBus;
-      originalRoute = prefs.getString("originalRoute") ?? currentRoute;
-      isTemporaryApplied = prefs.getBool("isTemporaryApplied") ?? false;
     });
+
+    // 🔥 STORE ORIGINAL BUS/ROUTE ON FIRST LOAD (if not already stored)
+    if (!prefs.containsKey("originalBusNumber")) {
+      await prefs.setString("originalBusNumber", currentBus);
+      await prefs.setString("originalRoute", currentRoute);
+    }
   }
 
-  // 🔹 Apply temporary bus + route change
+  // ================= APPLY TEMP CHANGE =================
   Future<void> _applyTempChange() async {
     final prefs = await SharedPreferences.getInstance();
+    final String? originalBus = prefs.getString("originalBusNumber");
     final String? busId = prefs.getString("busId");
 
-    print("🔥 APPLY TEMP BUS CLICKED");
-    print("🔥 busId = $busId");
-
-    if (busId == null) {
+    if (originalBus == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Bus ID not found")),
+        const SnackBar(content: Text("Original bus not found")),
       );
       return;
     }
 
-    // ---------- SAVE TEMP DATA LOCALLY ----------
-    if (busController.text.trim().isNotEmpty) {
-      await prefs.setString("busNumber", busController.text.trim());
-      currentBus = busController.text.trim();
+    final String newBus =
+        busController.text.trim().isNotEmpty
+            ? busController.text.trim()
+            : originalBus;
+
+    await prefs.setString("busNumber", newBus);
+    await prefs.setString("tempBusNumber", newBus);
+    await prefs.setString("routeName", selectedRoute);
+    await prefs.setBool("isTempBusActive", true);
+
+    if (busId != null) {
+      await FirebaseDatabase.instance
+          .ref("temporaryBus/$busId")
+          .set({
+        "active": true,
+        "tempBusNumber": newBus,
+        "tempRoute": selectedRoute,
+        "updatedAt": ServerValue.timestamp,
+      }).catchError((e) {
+        print("Firebase error: $e");
+      });
     }
 
-    await prefs.setString("route", selectedRoute);
-    currentRoute = selectedRoute;
+    busController.clear();
 
-    // ✅ SET FLAG TO TRUE so "Clear" button appears
-    await prefs.setBool("isTemporaryApplied", true);
-
-    // ---------- BACKEND SYNC ----------
-    await FirebaseDatabase.instance
-        .ref("temporaryBus/$busId")
-        .set({
-      "active": true,
-      "tempBusNumber": currentBus,
-      "tempRoute": currentRoute,
-      "updatedAt": ServerValue.timestamp,
-    }).then((_) {
-      print("✅ TEMP BUS WRITTEN TO FIREBASE");
-    }).catchError((e) {
-      print("❌ FIREBASE ERROR: $e");
+    // 🔥 UPDATE UI IMMEDIATELY
+    setState(() {
+      isTempActive = true;
+      currentBus = newBus;
+      currentRoute = selectedRoute;
     });
 
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Temporary bus applied")),
+      const SnackBar(content: Text("Temporary bus applied successfully")),
     );
 
-    // Update UI to show "Clear" button
-    setState(() {
-      isTemporaryApplied = true;
+    // 🔥 RETURN TRUE TO NOTIFY HOME PAGE AFTER SNACKBAR
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (mounted) Navigator.pop(context, true);
     });
-
-    // Navigate back to home page and notify to reload
-    if (mounted) {
-      Navigator.pop(context, true);
-    }
   }
 
-  // 🔹 Clear temporary change — revert to original
+  // ================= CLEAR TEMP CHANGE =================
   Future<void> _clearTempChange() async {
     final prefs = await SharedPreferences.getInstance();
+    final String? originalBus = prefs.getString("originalBusNumber");
+    final String? originalRoute = prefs.getString("originalRoute");
     final String? busId = prefs.getString("busId");
 
-    if (busId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Bus ID not found")),
-      );
-      return;
+    if (originalBus == null) return;
+
+    await prefs.setBool("isTempBusActive", false);
+    await prefs.remove("tempBusNumber");
+    await prefs.setString("busNumber", originalBus);
+    if (originalRoute != null) {
+      await prefs.setString("routeName", originalRoute);
     }
 
-    // ---------- LOCAL RESET ----------
-    final String originalBus =
-        prefs.getString("originalBus") ?? "9";
-    final String originalRoute =
-        prefs.getString("originalRoute") ?? "Madambakkam";
+    if (busId != null) {
+      await FirebaseDatabase.instance
+          .ref("temporaryBus/$busId")
+          .update({
+        "active": false,
+        "updatedAt": ServerValue.timestamp,
+      }).catchError((e) {
+        print("Firebase error: $e");
+      });
+    }
 
-    await prefs.setString("busNumber", originalBus);
-    await prefs.setString("route", originalRoute);
-    await prefs.setBool("isTemporaryApplied", false);
-
-    // ---------- BACKEND UPDATE ----------
-    await FirebaseDatabase.instance
-        .ref("temporaryBus/$busId")
-        .update({
-      "active": false,
-      "clearedAt": ServerValue.timestamp,
-    }).then((_)
-    {
-      print("✅ TEMP BUS CLEARED IN FIREBASE");
-    }).catchError((e)
-    {
-      print("❌ CLEAR TEMP BUS ERROR: $e");
+    // 🔥 UPDATE UI IMMEDIATELY
+    setState(() {
+      isTempActive = false;
+      currentBus = originalBus;
+      currentRoute = originalRoute ?? "Madambakkam";
+      selectedRoute = currentRoute;
     });
 
-    // ---------- UI ----------
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text("Temporary bus cleared")),
     );
 
-    // Go back & notify home page to reload
-    Navigator.pop(context, true);
+    // 🔥 RETURN TRUE TO NOTIFY HOME PAGE AFTER SNACKBAR
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (mounted) Navigator.pop(context, true);
+    });
   }
 
+  // ================= UI =================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -167,28 +174,16 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
 
-            // ================= CURRENT BUS INFO =================
+            // -------- CURRENT BUS INFO --------
             Container(
               padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 10,
-                  ),
-                ],
-              ),
+              decoration: _cardDecoration(),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
                     "Current Bus Information",
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 12),
                   _infoRow("Bus Number", currentBus),
@@ -199,32 +194,19 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
 
             const SizedBox(height: 24),
 
-            // ================= TEMP CHANGE =================
+            // -------- TEMP CHANGE --------
             Container(
               padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 10,
-                  ),
-                ],
-              ),
+              decoration: _cardDecoration(),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
                     "Temporary Bus Change",
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 12),
 
-                  // 🔢 BUS NUMBER
                   TextField(
                     controller: busController,
                     keyboardType: TextInputType.number,
@@ -238,16 +220,13 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
 
                   const SizedBox(height: 14),
 
-                  // 🛣 ROUTE DROPDOWN
                   DropdownButtonFormField<String>(
                     value: selectedRoute,
                     items: routes
-                        .map(
-                          (route) => DropdownMenuItem(
-                        value: route,
-                        child: Text(route),
-                      ),
-                    )
+                        .map((route) => DropdownMenuItem(
+                      value: route,
+                      child: Text(route),
+                    ))
                         .toList(),
                     onChanged: (val) {
                       setState(() => selectedRoute = val!);
@@ -285,8 +264,8 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
                     ),
                   ),
 
-                  // Show "Clear Temporary Change" button only if temporary change is applied
-                  if (isTemporaryApplied) ...[
+                  // 🔥 CLEAR BUTTON — ONLY WHEN ACTIVE
+                  if (isTempActive) ...[
                     const SizedBox(height: 10),
                     SizedBox(
                       width: double.infinity,
@@ -303,7 +282,6 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
                           "Clear Temporary Change",
                           style: TextStyle(
                             color: Colors.red,
-                            fontSize: 16,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -318,6 +296,18 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
       ),
     );
   }
+
+  // ================= HELPERS =================
+  BoxDecoration _cardDecoration() => BoxDecoration(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(16),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black.withOpacity(0.05),
+        blurRadius: 10,
+      ),
+    ],
+  );
 
   Widget _infoRow(String label, String value) {
     return Padding(

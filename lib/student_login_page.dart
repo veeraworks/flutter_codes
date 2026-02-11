@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'student_home_page.dart';
 import 'student_otp_page.dart';
@@ -45,27 +47,59 @@ class _StudentLoginPageState extends State<StudentLoginPage>
   }
 
   // ✅ MANUAL LOGIN (Firebase NOT touched)
-  void _login() {
+  Future<void> _login() async {
     String studentId = idController.text.trim();
     String mobileNumber = passwordController.text.trim();
 
-    if (studentId == "hi" && mobileNumber == "123") {
-      // ✅ Success → go to OTP page
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => StudentOtpPage(
-            studentId: studentId,
-            phoneNumber: mobileNumber,
-          ),
-        ),
-      );
-    } else {
-      // ❌ Failure
+    if (studentId.isEmpty || mobileNumber.isEmpty) {
       _shakeController.forward(from: 0);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Invalid Student ID or Mobile Number"),
+          content: Text("Please fill all fields"),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse("http://10.17.162.165:3000/students/check-student"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "regNo": studentId,     // ✅ FIXED
+          "phone": mobileNumber,
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data["student"] != null) {
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => StudentOtpPage(
+              studentId: studentId,
+              phoneNumber: mobileNumber,
+            ),
+          ),
+        );
+
+      } else {
+        _shakeController.forward(from: 0);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Invalid Student ID or Mobile Number"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Server not reachable"),
           backgroundColor: Colors.red,
         ),
       );
