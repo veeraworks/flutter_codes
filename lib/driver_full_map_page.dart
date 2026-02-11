@@ -8,7 +8,7 @@ class DriverFullMapPage extends StatelessWidget {
   const DriverFullMapPage({
     super.key,
     required this.currentLatLng,
-    required this.marker,
+    required this.marker, required List<dynamic> routePoints,
   });
 
   @override

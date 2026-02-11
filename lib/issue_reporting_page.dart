@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -25,22 +27,40 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
   Future<void> reportIssue(String issue) async {
     final prefs = await SharedPreferences.getInstance();
     final busId = prefs.getString("busId");
+    final routeName = prefs.getString("routeName");
 
-    if (busId == null) {
+    if (busId == null || routeName == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Bus ID not found")),
+        const SnackBar(content: Text("Bus or Route not found")),
       );
       return;
     }
 
+    // 1️⃣ Save issue in database
     await FirebaseDatabase.instance
         .ref("busIssues/$busId")
         .set({
       "issueType": issue,
+      "route": routeName,
       "status": "ACTIVE",
       "reportedAt": ServerValue.timestamp,
       "clearedAt": null,
     });
+
+    // 2️⃣ Call backend to send notification
+    try {
+      await http.post(
+        Uri.parse("http://10.17.162.165:3000/notify-route"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "route": routeName,
+          "title": "Bus Issue Alert",
+          "body": "$issue reported on your route.",
+        }),
+      );
+    } catch (e) {
+      print("Notification error: $e");
+    }
 
     setState(() {
       activeIssue = issue;
@@ -53,6 +73,7 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
       ),
     );
   }
+
 
   // ================= CLEAR ISSUE =================
   Future<void> clearIssue() async {
@@ -80,7 +101,7 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
     );
   }
 
-  // ================= UI =================
+  // ================= UI ==============================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(

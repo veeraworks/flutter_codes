@@ -5,44 +5,43 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 import 'driver_full_map_page.dart';
 import 'temporary_bus_change_page.dart';
 import 'driver_profile_page.dart';
 import 'driver_settings_page.dart';
 import 'issue_reporting_page.dart';
-import 'location_service.dart';
 
 class DriverHomePage extends StatefulWidget {
   const DriverHomePage({super.key});
 
   @override
   State<DriverHomePage> createState() => _DriverHomePageState();
+
 }
 
 class _DriverHomePageState extends State<DriverHomePage> {
   bool tripStarted = false;
   bool _initialized = false;
-  bool locationPermissionDenied = false;
-  bool isTripActionInProgress = false;
+  // 🔑 BUS INFO STATE (ADDED)
+  String busNumber = "-";
+  String routeName = "-";
+  String shift = "-";
+  bool isTempBusActive = false;
+
+
   bool gpsOn = false;
   bool internetOn = false;
   bool locationSyncOn = false;
 
   String? busId;
-  String driverName = "";
-  String busNumber = "";
-  String route = "";
-
-  String originalBusNumber = "";
-  String originalRoute = "";
-  bool isTempBusActive = false;
+  StreamSubscription<Position>? positionStream;
 
   // 🗺️ MAP STATE
   GoogleMapController? _mapController;
   Marker? _driverMarker;
+  Marker? _startMarker;
+  Marker? _endMarker;
   LatLng _currentLatLng = const LatLng(13.0827, 80.2707); // default
 
   // 🧵 ROUTE POLYLINE STATE
@@ -54,7 +53,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
   void initState() {
     super.initState();
     _initialize();
-    _loadDriverData();
   }
 
   Future<void> _initialize() async {
@@ -73,6 +71,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
   @override
   void dispose() {
+    positionStream?.cancel();
     super.dispose();
   }
 
@@ -83,57 +82,17 @@ class _DriverHomePageState extends State<DriverHomePage> {
       busId = prefs.getString("busId");
     });
   }
-// ================= LOAD BUS INFO =================================
+// ================= LOAD BUS INFO (ADDED) =================
   Future<void> _loadBusInfo() async {
     final prefs = await SharedPreferences.getInstance();
 
     setState(() {
-      originalBusNumber = prefs.getString("originalBus") ?? "9";
-      originalRoute = prefs.getString("originalRoute") ?? "Madambakkam";
-
-      isTempBusActive = prefs.getBool("isTemporaryApplied") ?? false;
-
-      if (isTempBusActive) {
-        // Temporary values
-        busNumber = prefs.getString("busNumber") ?? originalBusNumber;
-        route = prefs.getString("route") ?? originalRoute;
-      } else {
-        // Permanent values
-        busNumber = originalBusNumber;
-        route = originalRoute;
-      }
+      busNumber = prefs.getString("busNumber") ?? "-";
+      routeName = prefs.getString("routeName") ?? "-";
+      shift = prefs.getString("shift") ?? "-";
+      isTempBusActive = prefs.getBool("isTempBusActive") ?? false;
     });
-  }
-
-  //--------------- LOAD DRIVER DATA FROM FIRESTORE --------------
-  Future<void> _loadDriverData() async {
-    final user = FirebaseAuth.instance.currentUser;
-
-    if (user == null) {
-      debugPrint("No logged-in user found");
-      return;
-    }
-
-    try {
-      final doc = await FirebaseFirestore.instance
-          .collection('driver')
-          .doc(user.uid)
-          .get();
-
-      if (!doc.exists) {
-        ("Driver document not found for UID: ${user.uid}");
-        return;
-      }
-
-      final data = doc.data()!;       // 5️⃣ Read data safely
-
-      setState(() {  // 6️⃣ Update state (ONLY identity + backend mapping)
-        driverName = data['name'] ?? driverName;
-        busId = data['busid'] ?? busId;
-      });
-    } catch (e) {
-      debugPrint("Error loading driver data: $e");
-    }
+    print("HOME RELOAD → busNumber=$busNumber, isTempBusActive=$isTempBusActive");
   }
 
   // ---------------- CHECK GPS / INTERNET ---------------------------------------
@@ -152,97 +111,211 @@ class _DriverHomePageState extends State<DriverHomePage> {
     });
   }
 
+  // ================= START GPS TRACKING ==================================
+  Future<void> _startLocationUpdates() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      print("GPS SERVICE DISABLED");
+      return;
+    }
+    LocationPermission permission = await Geolocator.checkPermission();
+
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      print("LOCATION PERMISSION DENIED");
+      return;
+    }
+
+    positionStream?.cancel();
+
+    positionStream = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5,
+      ),
+    ).listen((position) {print("GPS UPDATE → ${position.latitude}, ${position.longitude}");
+
+    if (!tripStarted) {
+      print("GPS running but trip not started");
+      return;
+    }
+
+      final latLng = LatLng(position.latitude, position.longitude);
+
+      setState(() {
+        _currentLatLng = latLng;
+
+        _driverMarker = Marker(
+          markerId: const MarkerId("driver"),
+          position: latLng,
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueGreen,
+          ),
+        );
+
+        _routePoints.add(latLng);
+        print("Route points now = ${_routePoints.length}");
+
+        _polylines.clear();
+        _polylines.add(
+          Polyline(
+            polylineId: const PolylineId("route"),
+            points: _routePoints,
+            color: Colors.blue,
+            width: 5,
+          ),
+        );
+        _polylines = {
+          Polyline(
+            polylineId: const PolylineId("route"),
+            points: _routePoints,
+            color: Colors.blue,
+            width: 6,
+            jointType: JointType.round,
+            startCap: Cap.roundCap,
+            endCap: Cap.roundCap,
+          ),
+        };
+      });
+
+      _mapController?.animateCamera(
+        CameraUpdate.newLatLng(latLng),
+      );
+
+      // Update Firebase only if busId exists (non-blocking)
+      if (busId != null) {
+        FirebaseDatabase.instance.ref("buses/$busId").set({
+          "lat": position.latitude,
+          "lng": position.longitude,
+          "updatedAt": ServerValue.timestamp,
+        }).catchError((e) {
+          // optional: log error but don't block UI
+          print("Failed to update bus location: $e");
+        });
+      }
+    });
+  }
+
   // ---------------- START / END TRIP --------------------------------------
   Future<void> _toggleTrip() async {
-    if (isTripActionInProgress) return;
-    isTripActionInProgress = true;
-
     await _checkStatuses();
 
-    debugPrint("busId: $busId, gpsOn: $gpsOn, internetOn: $internetOn");
+    // 🔍 DEBUG LINE — PASTE EXACTLY HERE
+    print("busId: $busId, gpsOn: $gpsOn, internetOn: $internetOn");
 
-    // ================= START TRIP =================
+    // Do NOT return early when busId is null — allow local start/end
     if (!tripStarted) {
-      // GPS must be ON
       if (!gpsOn) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Please enable GPS")),
         );
         await Geolocator.openLocationSettings();
-        isTripActionInProgress = false;
         return;
       }
 
-      // Internet warning only (do not block)
       if (!internetOn) {
+        // allow starting locally but warn the user
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Internet is off — tracking will sync when online"),
-          ),
+          const SnackBar(content: Text("Internet is off — tracking will run locally")),
         );
       }
 
-      // Update UI immediately
+      // Immediately update UI so button changes to "End Trip" and map appears
       setState(() {
         tripStarted = true;
         _routePoints.clear();
         _polylines.clear();
+        _startMarker = Marker(
+          markerId: const MarkerId("start"),
+          position: _currentLatLng,
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueGreen,
+          ),
+        );
       });
 
-      // Save local trip state
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool("trackingActive", true);
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setBool("trackingActive", true);
+      });
 
-      // 🚀 START TRACKING (SINGLE SOURCE)
+      // Start location updates without blocking the UI (don't await)
+      _startLocationUpdates();
+
+      // Update Firebase status non-blocking (only if busId present)
       if (busId != null) {
-        LocationService.startTracking(busId!);
-
-        // Update trip status in Firebase (non-blocking)
         FirebaseDatabase.instance
             .ref("busTrips/$busId/status")
             .set("STARTED")
             .catchError((e) {
-          debugPrint("Failed to set STARTED status: $e");
+          print("Failed to set STARTED status: $e");
         });
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Bus ID not found — tracking disabled"),
+          const SnackBar(content: Text("Bus ID not found — running in local mode")),
+        );
+      }
+    } else {
+      // End trip: cancel stream and update U I immediately
+      await positionStream?.cancel();
+      positionStream = null;
+      if (_routePoints.isNotEmpty) {
+        _endMarker = Marker(
+          markerId: const MarkerId("end"),
+          position: _routePoints.last,
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueRed,
           ),
         );
       }
-    }
 
-    // ================= END TRIP =================
-    else {
-      // 🛑 STOP TRACKING
-      await LocationService.stopTracking();
-
-      // Update UI immediately
       setState(() {
         tripStarted = false;
         _routePoints.clear();
         _polylines.clear();
       });
 
-      // Save local trip state
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool("trackingActive", false);
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setBool("trackingActive", false);
+      });
 
-      // Update trip status in Firebase (non-blocking)
+      // Update Firebase status non-blocking if busId present
       if (busId != null) {
         FirebaseDatabase.instance
             .ref("busTrips/$busId/status")
             .set("ENDED")
             .catchError((e) {
-          debugPrint("Failed to set ENDED status: $e");
+          print("Failed to set ENDED status: $e");
         });
       }
+      // 🔥 AUTO CLEAR TEMP BUS ON END TRIP
+      final prefs = await SharedPreferences.getInstance();
+      final bool isTempActive = prefs.getBool("isTempBusActive") ?? false;
+
+      if (isTempActive) {
+        await prefs.setBool("isTempBusActive", false);
+
+        // optional backend update
+        if (busId != null) {
+          FirebaseDatabase.instance
+              .ref("temporaryBus/$busId")
+              .update({
+            "active": false,
+            "updatedAt": ServerValue.timestamp,
+          });
+        }
+
+        // reload home page bus info
+        await _loadBusInfo();
+      }
+
     }
 
     await _checkStatuses();
-    isTripActionInProgress = false;
   }
+
   // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
@@ -253,112 +326,54 @@ class _DriverHomePageState extends State<DriverHomePage> {
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
-            // ======= MODERN DRIVER HEADER =======
-            DrawerHeader(
-              margin: EdgeInsets.zero,
-              padding: EdgeInsets.zero,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF00BFA5), Color(0xFF00796B)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-              ),
-              child: SafeArea(
-                bottom: false,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Avatar + status
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          CircleAvatar(
-                            radius: 28,
-                            backgroundColor: Colors.white,
-                            child: Icon(
-                              Icons.person,
-                              size: 32,
-                              color: Color(0xFF00796B),
-                            ),
-                          ),
-                          Container(
-                            padding:
-                            const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          ),
-                        ],
-                      ),
-
-                      const Spacer(),
-
-                      // Driver name
-                      Text(
-                        driverName.isNotEmpty ? driverName : "Driver",
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-
-                      const SizedBox(height: 4),
-
-                      if (busId != null && busId!.isNotEmpty)
-                        Text(
-                          "Bus No: $busId",
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 14,
-                          ),
-                        ),
-
-                      const SizedBox(height: 2),
-
-                      if (route.isNotEmpty)
-                        Text(
-                          route,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white60,
-                            fontSize: 13,
-                          ),
-                        ),
-                    ],
+            const DrawerHeader(
+              decoration: BoxDecoration(color: Color(0xFF00BFA6)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    radius: 28,
+                    backgroundColor: Colors.white,
+                    child: Icon(Icons.person, color: Color(0xFF00BFA6)),
                   ),
-                ),
+                  SizedBox(height: 12),
+                  Text(
+                    "Driver",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
               ),
             ),
 
-            // ======= MENU ITEMS =======
             ListTile(
               leading: const Icon(Icons.person),
               title: const Text("Profile"),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const DriverProfilePage()),
-                );
-              },
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const DriverProfilePage()),
+              ),
             ),
-
             ListTile(
               leading: const Icon(Icons.swap_horiz, color: Colors.orange),
               title: const Text("Temporary Bus Change"),
               onTap: () async {
-                Navigator.pop(context);
-                final result = await Navigator.push(
+                Navigator.pop(context); // close drawer first
+
+                final bool? updated = await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => const TemporaryBusChangePage(),
                   ),
                 );
-                if (result == true) {
+
+                // Refresh bus info if user applied or cleared changes
+                if (updated == true) {
                   await _loadBusInfo();
-                  setState(() {});
+                  await _checkStatuses();
                 }
               },
             ),
@@ -366,29 +381,18 @@ class _DriverHomePageState extends State<DriverHomePage> {
             ListTile(
               leading: const Icon(Icons.report_problem, color: Colors.red),
               title: const Text("Issue Reporting"),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const IssueReportingPage(),
-                  ),
-                );
-              },
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const IssueReportingPage()),
+              ),
             ),
-
             ListTile(
               leading: const Icon(Icons.settings),
               title: const Text("Settings"),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const DriverSettingsPage(),
-                  ),
-                );
-              },
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const DriverSettingsPage()),
+              ),
             ),
           ],
         ),
@@ -446,28 +450,21 @@ class _DriverHomePageState extends State<DriverHomePage> {
           _infoCard(
             title: 'Bus Information',
             children: [
-              // Display permanent/original bus info as the main Bus Information
-              _infoRow('Route', originalRoute),
-              _infoRow('Bus Number', originalBusNumber),
-              _infoRow('Shift', 'Morning'),
+              _infoRow('Route', routeName),
+              _infoRow('Bus Number', busNumber),
+              _infoRow('Shift', shift),
 
-              // Show temporary details only if temporary change is active
-              if (isTempBusActive) ...[
-                const SizedBox(height: 12),
-                const Divider(),
-                const SizedBox(height: 12),
-                const Text(
-                  'Temporary Bus Changes',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.orange,
+              if (isTempBusActive)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    "TEMPORARY BUS ACTIVE",
+                    style: const TextStyle(
+                      color: Colors.orange,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
-                const SizedBox(height: 8),
-                _infoRow('Temporary Route', route),
-                _infoRow('Temporary Bus Number', busNumber),
-              ],
             ],
           ),
 
@@ -476,14 +473,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
           _infoCard(
             title: 'Location Status',
             children: [
-              if (locationPermissionDenied)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    "Location permission denied. Enable it in settings.",
-                    style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600),
-                  ),
-                ),
               _statusRow('GPS', gpsOn, tripStarted),
               _statusRow('Internet', internetOn, tripStarted),
               _statusRow('Location Sync', locationSyncOn, tripStarted),
@@ -508,11 +497,13 @@ class _DriverHomePageState extends State<DriverHomePage> {
                           onMapCreated: (controller) {
                             _mapController = controller;
                           },
-                          myLocationEnabled: tripStarted,
-                          myLocationButtonEnabled: tripStarted,
-                          markers: _driverMarker != null
-                              ? {_driverMarker!}
-                              : {},
+                          myLocationEnabled: true,
+                          myLocationButtonEnabled: true,
+                          markers: {
+                            if (_driverMarker != null) _driverMarker!,
+                            if (_startMarker != null) _startMarker!,
+                            if (_endMarker != null) _endMarker!,
+                          },
                           polylines: _polylines,
                         ),
                       ),
@@ -521,12 +512,17 @@ class _DriverHomePageState extends State<DriverHomePage> {
                           color: Colors.transparent,
                           child: InkWell(
                             onTap: () {
+                              print("Route points count = ${_routePoints.length}");
+
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
                                   builder: (_) => DriverFullMapPage(
                                     currentLatLng: _currentLatLng,
                                     marker: _driverMarker,
+
+                                    // 🔴 THIS LINE IS MANDATORY
+                                    routePoints: List.from(_routePoints),
                                   ),
                                 ),
                               );
@@ -543,7 +539,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
             child: GestureDetector(
-              onTap: isTripActionInProgress ? null : _toggleTrip,
+              onTap: _toggleTrip,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 300),
                 width: double.infinity,
