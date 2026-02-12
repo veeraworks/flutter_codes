@@ -67,7 +67,7 @@ class _StudentLoginPageState extends State<StudentLoginPage>
         Uri.parse("http://10.17.162.165:3000/students/check-student"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
-          "regNo": studentId,     // ✅ FIXED
+          "regNo": studentId,
           "phone": mobileNumber,
         }),
       );

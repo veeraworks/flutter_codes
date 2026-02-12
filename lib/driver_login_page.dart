@@ -1,6 +1,10 @@
+import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
 import 'driver_signup_page.dart';
-import 'driver_otp_page.dart'; // ✅ OTP PAGE
+import 'driver_otp_page.dart';
 
 class DriverLoginPage extends StatefulWidget {
   const DriverLoginPage({super.key});
@@ -24,10 +28,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
   void initState() {
     super.initState();
 
-    // ✅ DEFAULT VALUES (for testing)
-    driverNameController.text = "Driver One";
-    phoneController.text = "9876543210";
-
     shakeController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
@@ -42,46 +42,78 @@ class _DriverLoginPageState extends State<DriverLoginPage>
     super.dispose();
   }
 
-  // 🔐 LOGIN → OTP PAGE
-  void driverLogin() async {
+  // ================= LOGIN =================
+  Future<void> driverLogin() async {
     final name = driverNameController.text.trim();
     final phone = phoneController.text.trim();
 
     if (name.isEmpty || phone.isEmpty) {
       setState(() => showError = true);
-      shakeController.forward(from: 0);
       return;
     }
 
-    setState(() => isLoading = true);
+    if (phone.length != 10) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Enter valid 10-digit phone number")),
+      );
+      return;
+    }
 
-    // ⏳ simulate API / OTP send
-    await Future.delayed(const Duration(seconds: 1));
+    setState(() {
+      showError = false;
+      isLoading = true;
+    });
 
-    setState(() => isLoading = false);
+    try {
+      final response = await http.post(
+        Uri.parse("http://10.17.162.165:3000/drivers/check-driver"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"phone": phone}),
+      ).timeout(const Duration(seconds: 8));
 
-    // ✅ NAVIGATE TO OTP PAGE
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => DriverOtpPage(
-          phoneNumber: phone,
-        ),
-      ),
-    );
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data["driver"] != null) {
+        if (!mounted) return;
+
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => DriverOtpPage(
+              phoneNumber: phone,
+              driverName: data["driver"]["name"], // 👈 use backend name
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Driver not found")),
+        );
+      }
+
+    } on TimeoutException {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Server timeout")),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Network error")),
+      );
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
   }
 
+  // ================= INPUT DECORATION =================
   InputDecoration inputDecoration({
     required String hint,
     required IconData icon,
   }) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: const TextStyle(fontSize: 15),
       prefixIcon: Icon(icon, color: const Color(0xFF00C9A7)),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: Color(0xFF00C9A7)),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(18),
@@ -97,13 +129,13 @@ class _DriverLoginPageState extends State<DriverLoginPage>
     );
   }
 
+  // ================= UI =================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
 
-          // 🌍 Background map image
           Positioned.fill(
             child: Image.asset(
               'assets/images/maps6.png',
@@ -111,7 +143,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
             ),
           ),
 
-          // ☁ White overlay
           Positioned.fill(
             child: Container(color: Colors.white.withOpacity(0.50)),
           ),
@@ -123,7 +154,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
                 mainAxisSize: MainAxisSize.min,
                 children: [
 
-                  // 🚌 Bus icon
                   Container(
                     width: 110,
                     height: 110,
@@ -140,7 +170,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
 
                   const SizedBox(height: 30),
 
-                  // 📦 Login Card
                   Container(
                     padding: const EdgeInsets.fromLTRB(22, 28, 22, 28),
                     decoration: BoxDecoration(
@@ -168,7 +197,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
 
                         const SizedBox(height: 22),
 
-                        // 👤 Driver name
                         TextField(
                           controller: driverNameController,
                           decoration: inputDecoration(
@@ -179,7 +207,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
 
                         const SizedBox(height: 18),
 
-                        // 📱 Phone number
                         TextField(
                           controller: phoneController,
                           keyboardType: TextInputType.phone,
@@ -203,7 +230,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
 
                         const SizedBox(height: 26),
 
-                        // 🔘 SEND OTP BUTTON
                         GestureDetector(
                           onTap: isLoading ? null : driverLogin,
                           child: Container(
@@ -237,7 +263,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
 
                         const SizedBox(height: 18),
 
-                        // ➕ Signup
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [

@@ -1,13 +1,17 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'driver_home_page.dart';
 
 class DriverOtpPage extends StatefulWidget {
   final String phoneNumber;
+  final String driverName;
 
   const DriverOtpPage({
     super.key,
     required this.phoneNumber,
+    required this.driverName,
   });
 
   @override
@@ -18,51 +22,66 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
   final TextEditingController otpController = TextEditingController();
   bool isLoading = false;
 
-  @override
-  void dispose() {
-    otpController.dispose();
-    super.dispose();
-  }
-
   Future<void> submitOtp() async {
     if (otpController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please enter OTP")),
+        const SnackBar(content: Text("Enter OTP")),
       );
       return;
     }
 
     setState(() => isLoading = true);
 
-    await Future.delayed(const Duration(seconds: 1));
+    try {
+      final response = await http.post(
+        Uri.parse("http://10.17.162.165:3000/drivers/check-driver"), // ✅ FIXED IP
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "phone": widget.phoneNumber,
+        }),
+      ).timeout(const Duration(seconds: 8));
 
-    final prefs = await SharedPreferences.getInstance();
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
 
-    const String driverName = "Driver One";
-    const String busId = "BUS10";
-    const String routeName = "Madambakkam";
-    const String shift = "Morning";
+        if (data["driver"] != null) {
 
-    await prefs.setString("driverName", driverName);
-    await prefs.setString("busId", busId);
-    await prefs.setString("routeName", routeName);
-    await prefs.setString("shift", shift);
+          final prefs = await SharedPreferences.getInstance();
 
-    // 🔒 ORIGINAL / BASE BUS INFO (IMPORTANT)
-    await prefs.setString("originalBusNumber", busId); // BUS10
-    await prefs.setString("busNumber", busId);         // current displayed bus
-    await prefs.setBool("isTempBusActive", false);     // reset temp state
+          await prefs.setString("driverName", data["driver"]["name"]);
+          await prefs.setString("busId", data["driver"]["busId"]);
+          await prefs.setString("routeName", data["driver"]["busName"] ?? "");
+          await prefs.setString("busNumber", data["driver"]["busId"]);
+          await prefs.setBool("isTempBusActive", false);
 
-    setState(() => isLoading = false);
+          if (!mounted) return;
 
-    if (!mounted) return;
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const DriverHomePage(),
+            ),
+          );
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const DriverHomePage(),
-      ),
-    );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Driver not found")),
+          );
+        }
+      }
+      else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Server error ${response.statusCode}")),
+        );
+      }
+
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Network error")),
+      );
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
   }
 
   @override
