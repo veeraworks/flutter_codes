@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'driver_about_app_page.dart';
+import 'driver_login_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class DriverSettingsPage extends StatefulWidget {
@@ -30,10 +31,19 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
 
   void _logout() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
+
+    await prefs.setBool("trackingActive", false);    // Stop tracking flag
+
+    await prefs.clear();    // Clear all stored data
 
     if (!mounted) return;
-    Navigator.pop(context);
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const DriverLoginPage(),
+      ),
+          (route) => false,
+    );
   }
 
   @override
