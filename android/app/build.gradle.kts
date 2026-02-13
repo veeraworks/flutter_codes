@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.smartbusdriver"
+    namespace = "com.example.project_spt"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -22,7 +22,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.smartbusdriver"
+        applicationId = "com.example.project_spt"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

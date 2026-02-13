@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -22,7 +24,7 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
   final List<String> routes = [
     "Ashok Pillar",
     "Koyambedu",
-    "Madambakkam"
+    "Madambakkam",
     "Nesapakkam",
     "Madipakkam",
     "Velachery",
@@ -62,24 +64,26 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
     final String? originalBus = prefs.getString("originalBusNumber");
     final String? busId = prefs.getString("busId");
 
-    if (originalBus == null) {
+    if (originalBus == null || busId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Original bus not found")),
+        const SnackBar(content: Text("Bus information missing")),
       );
       return;
     }
 
     final String newBus =
-        busController.text.trim().isNotEmpty
-            ? busController.text.trim()
-            : originalBus;
+    busController.text.trim().isNotEmpty
+        ? busController.text.trim()
+        : originalBus;
 
-    await prefs.setString("busNumber", newBus);
-    await prefs.setString("tempBusNumber", newBus);
-    await prefs.setString("routeName", selectedRoute);
-    await prefs.setBool("isTempBusActive", true);
+    try {
+      // ================= 1️⃣ UPDATE LOCAL STORAGE =================
+      await prefs.setString("busNumber", newBus);
+      await prefs.setString("tempBusNumber", newBus);
+      await prefs.setString("routeName", selectedRoute);
+      await prefs.setBool("isTempBusActive", true);
 
-    if (busId != null) {
+      // ================= 2️⃣ UPDATE FIREBASE REALTIME DB =================
       await FirebaseDatabase.instance
           .ref("temporaryBus/$busId")
           .set({
@@ -87,29 +91,46 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
         "tempBusNumber": newBus,
         "tempRoute": selectedRoute,
         "updatedAt": ServerValue.timestamp,
-      }).catchError((e) {
-        print("Firebase error: $e");
       });
+
+      // ================= 3️⃣ UPDATE BACKEND SERVER =================
+      await http.post(
+        Uri.parse("http://10.17.162.165:3000/temporary-bus"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "busId": busId,
+          "tempBusNumber": newBus,
+          "tempRoute": selectedRoute,
+          "active": true,
+        }),
+      );
+
+      // ================= 4️⃣ UPDATE UI =================
+      setState(() {
+        isTempActive = true;
+        currentBus = newBus;
+        currentRoute = selectedRoute;
+      });
+
+      busController.clear();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Temporary bus applied successfully")),
+      );
+
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted) Navigator.pop(context, true);
+      });
+
+    } catch (e) {
+      print("Temporary Bus Error: $e");
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Something went wrong")),
+      );
     }
-
-    busController.clear();
-
-    // 🔥 UPDATE UI IMMEDIATELY
-    setState(() {
-      isTempActive = true;
-      currentBus = newBus;
-      currentRoute = selectedRoute;
-    });
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Temporary bus applied successfully")),
-    );
-
-    // 🔥 RETURN TRUE TO NOTIFY HOME PAGE AFTER SNACKBAR
-    Future.delayed(const Duration(milliseconds: 800), () {
-      if (mounted) Navigator.pop(context, true);
-    });
   }
 
   // ================= CLEAR TEMP CHANGE =================
@@ -119,11 +140,17 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
     final String? originalRoute = prefs.getString("originalRoute");
     final String? busId = prefs.getString("busId");
 
-    if (originalBus == null) return;
+    if (originalBus == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Original bus not found")),
+      );
+      return;
+    }
 
     await prefs.setBool("isTempBusActive", false);
     await prefs.remove("tempBusNumber");
     await prefs.setString("busNumber", originalBus);
+
     if (originalRoute != null) {
       await prefs.setString("routeName", originalRoute);
     }
@@ -139,7 +166,19 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
       });
     }
 
-    // 🔥 UPDATE UI IMMEDIATELY
+    try {
+      await http.post(
+        Uri.parse("http://10.17.162.165:3000/temporary-bus"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "busId": busId,
+          "active": false,
+        }),
+      );
+    } catch (e) {
+      print("Backend error: $e");
+    }
+
     setState(() {
       isTempActive = false;
       currentBus = originalBus;
@@ -148,11 +187,11 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
     });
 
     if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text("Temporary bus cleared")),
     );
 
-    // 🔥 RETURN TRUE TO NOTIFY HOME PAGE AFTER SNACKBAR
     Future.delayed(const Duration(milliseconds: 800), () {
       if (mounted) Navigator.pop(context, true);
     });

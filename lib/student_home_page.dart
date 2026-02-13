@@ -5,6 +5,10 @@ import 'map_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'main.dart';
 import 'help_page.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class StudentHomePage extends StatefulWidget {
   const StudentHomePage({super.key});
@@ -18,6 +22,38 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
   int _currentIndex = 0;
   String busStatus = 'arriving';
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribeToRoute();
+    _saveFcmToken();
+  }
+
+  Future<void> _subscribeToRoute() async {
+    final prefs = await SharedPreferences.getInstance();
+    final routeName = prefs.getString("routeName");
+
+    if (routeName != null) {
+      await FirebaseMessaging.instance.subscribeToTopic(routeName);
+      print("Subscribed to topic: $routeName");
+    }
+  }
+
+  Future<void> _saveFcmToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    final routeName = prefs.getString("routeName");
+
+    if (routeName == null) return;
+
+    String? token = await FirebaseMessaging.instance.getToken();
+
+    if (token != null) {
+      await FirebaseDatabase.instance
+          .ref("routeTokens/$routeName/$token")
+          .set(true);
+    }
+  }
 
   // ✅ LOGOUT FUNCTION
   void _logout() {
