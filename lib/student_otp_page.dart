@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'student_home_page.dart';
 
 class StudentOtpPage extends StatefulWidget {
@@ -18,7 +19,9 @@ class StudentOtpPage extends StatefulWidget {
 class _StudentOtpPageState extends State<StudentOtpPage> {
   final TextEditingController otpController = TextEditingController();
 
-  void _submitOtp() {
+  bool isLoading = false;
+
+  Future<void> _submitOtp() async {
     if (otpController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -29,12 +32,45 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
       return;
     }
 
-    // ✅ After OTP → Student Home
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (context) => StudentHomePage()),
-          (route) => false,
-    );
+    // 🔥 Start loading
+    setState(() {
+      isLoading = true;
+    });
+
+    // Simulate verification delay (replace with real OTP verification later)
+    await Future.delayed(const Duration(seconds: 1));
+
+    try {
+      // ✅ SAVE SESSION
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      await prefs.setBool("isLoggedIn", true);
+      await prefs.setString("role", "student");
+      await prefs.setString("studentId", widget.studentId);
+
+      // ✅ Navigate to Home
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const StudentHomePage()),
+            (route) => false,
+      );
+    } catch (e) {
+      setState(() {
+        isLoading = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Something went wrong"),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    otpController.dispose();
+    super.dispose();
   }
 
   @override
@@ -43,7 +79,10 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
       backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.teal,
-        title: const Text("OTP Verification", style: TextStyle(color: Colors.white)),
+        title: const Text(
+          "OTP Verification",
+          style: TextStyle(color: Colors.white),
+        ),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: Center(
@@ -65,7 +104,6 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-
                 CircleAvatar(
                   radius: 36,
                   backgroundColor: Colors.teal.withOpacity(0.15),
@@ -96,7 +134,8 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
                   controller: otpController,
                   keyboardType: TextInputType.number,
                   decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.password, color: Colors.teal),
+                    prefixIcon:
+                    const Icon(Icons.password, color: Colors.teal),
                     hintText: "Enter OTP",
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -110,14 +149,18 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
                   width: double.infinity,
                   height: 52,
                   child: ElevatedButton(
-                    onPressed: _submitOtp,
+                    onPressed: isLoading ? null : _submitOtp,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.teal,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(30),
                       ),
                     ),
-                    child: const Text(
+                    child: isLoading
+                        ? const CircularProgressIndicator(
+                      color: Colors.white,
+                    )
+                        : const Text(
                       "SUBMIT",
                       style: TextStyle(
                         fontSize: 16,

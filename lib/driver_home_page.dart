@@ -190,6 +190,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
         FirebaseDatabase.instance.ref("buses/$busId").set({
           "lat": position.latitude,
           "lng": position.longitude,
+          "bearing": position.heading,
           "updatedAt": ServerValue.timestamp,
         }).catchError((e) {
           // optional: log error but don't block UI

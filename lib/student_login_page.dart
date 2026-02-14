@@ -1,10 +1,7 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'student_home_page.dart';
 import 'student_otp_page.dart';
 import 'student_signup_page.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // 🔥 kept as requested
 
 class StudentLoginPage extends StatefulWidget {
   const StudentLoginPage({super.key});
@@ -18,8 +15,6 @@ class _StudentLoginPageState extends State<StudentLoginPage>
 
   final TextEditingController idController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
-
-  bool _obscurePassword = false;
 
   late AnimationController _shakeController;
   late Animation<double> _shakeAnimation;
@@ -46,60 +41,28 @@ class _StudentLoginPageState extends State<StudentLoginPage>
     super.dispose();
   }
 
-  // ✅ MANUAL LOGIN (Firebase NOT touched)
-  Future<void> _login() async {
+  // ✅ MANUAL HARDCODED LOGIN
+  void _login() {
     String studentId = idController.text.trim();
-    String mobileNumber = passwordController.text.trim();
+    String password = passwordController.text.trim();
 
-    if (studentId.isEmpty || mobileNumber.isEmpty) {
+    if (studentId == "hi" && password == "123") {
+
+      // 🔥 Go to OTP Page instead of Home
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => StudentOtpPage(
+            studentId: studentId,
+            phoneNumber: "9876543210",
+          ),
+        ),
+      );
+    } else {
       _shakeController.forward(from: 0);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Please fill all fields"),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    try {
-      final response = await http.post(
-        Uri.parse("http://10.17.162.165:3000/students/check-student"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "regNo": studentId,
-          "phone": mobileNumber,
-        }),
-      );
-
-      final data = jsonDecode(response.body);
-
-      if (response.statusCode == 200 && data["student"] != null) {
-
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => StudentOtpPage(
-              studentId: studentId,
-              phoneNumber: mobileNumber,
-            ),
-          ),
-        );
-
-      } else {
-        _shakeController.forward(from: 0);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Invalid Student ID or Mobile Number"),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Server not reachable"),
+          content: Text("Invalid ID or Password"),
           backgroundColor: Colors.red,
         ),
       );
@@ -122,8 +85,6 @@ class _StudentLoginPageState extends State<StudentLoginPage>
               'assets/images/student2.jpg',
               height: 240,
               fit: BoxFit.cover,
-              color: Colors.white.withOpacity(0.1),
-              colorBlendMode: BlendMode.lighten,
             ),
           ),
 
@@ -187,7 +148,6 @@ class _StudentLoginPageState extends State<StudentLoginPage>
                           /// 🆔 STUDENT ID
                           TextField(
                             controller: idController,
-                            keyboardType: TextInputType.text,
                             decoration: InputDecoration(
                               prefixIcon: const Icon(Icons.badge, color: Colors.teal),
                               hintText: 'Student ID',
@@ -199,13 +159,13 @@ class _StudentLoginPageState extends State<StudentLoginPage>
 
                           const SizedBox(height: 16),
 
-                          /// 📱 MOBILE NUMBER
+                          /// 🔐 PASSWORD
                           TextField(
                             controller: passwordController,
-                            keyboardType: TextInputType.phone,
+                            obscureText: true,
                             decoration: InputDecoration(
-                              prefixIcon: const Icon(Icons.phone, color: Colors.teal),
-                              hintText: 'Mobile Number',
+                              prefixIcon: const Icon(Icons.lock, color: Colors.teal),
+                              hintText: 'Password',
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
@@ -239,33 +199,25 @@ class _StudentLoginPageState extends State<StudentLoginPage>
 
                           const SizedBox(height: 14),
 
-                          /// 🌟 BETTER SIGN UP SECTION
                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Text(
-                                "New here? ",
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.black,
-                                ),
-                              ),
+                              const Text("New here? "),
                               GestureDetector(
                                 onTap: () {
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (context) => const StudentSignupPage(),
+                                      builder: (context) =>
+                                      const StudentSignupPage(),
                                     ),
                                   );
                                 },
                                 child: const Text(
                                   "Create an account",
                                   style: TextStyle(
-                                    fontSize: 16,
                                     color: Colors.teal,
                                     fontWeight: FontWeight.bold,
-
                                   ),
                                 ),
                               ),

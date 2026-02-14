@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'settings_page.dart';
@@ -7,6 +8,7 @@ import 'main.dart';
 import 'help_page.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -22,12 +24,15 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
   int _currentIndex = 0;
   String busStatus = 'arriving';
+  double? _etaMinutes;
+  StreamSubscription<DatabaseEvent>? _busListener;
 
   @override
   void initState() {
     super.initState();
     _subscribeToRoute();
     _saveFcmToken();
+    _listenToBus();
   }
 
   Future<void> _subscribeToRoute() async {
@@ -55,7 +60,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
     }
   }
 
-  // ✅ LOGOUT FUNCTION
+// ✅ LOGOUT FUNCTION
   void _logout() {
     showDialog(
       context: context,
@@ -70,20 +75,77 @@ class _StudentHomePageState extends State<StudentHomePage> {
           TextButton(
             onPressed: () async {
               Navigator.pop(context);
+
+              // 🔥 Clear SharedPreferences session
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.clear();
+
+              // 🔥 Optional: Firebase sign out (safe to keep)
               await FirebaseAuth.instance.signOut();
 
+              // 🔥 Navigate & remove back stack
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(builder: (_) => const WelcomePage()),
                     (route) => false,
               );
             },
-            child:
-            const Text("Logout", style: TextStyle(color: Colors.red)),
+            child: const Text(
+              "Logout",
+              style: TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _listenToBus() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? busId = prefs.getString("busId");
+
+    if (busId == null) return;
+
+    _busListener = FirebaseDatabase.instance
+        .ref("buses/$busId")
+        .onValue
+        .listen((event) async {
+
+      final data = event.snapshot.value;
+      if (data == null) return;
+
+      final map = Map<String, dynamic>.from(data as Map);
+
+      double lat = map["lat"];
+      double lng = map["lng"];
+
+      // Get student location
+      Position position = await Geolocator.getCurrentPosition();
+
+      double distance = Geolocator.distanceBetween(
+        lat,
+        lng,
+        position.latitude,
+        position.longitude,
+      );
+
+      if (distance < 50) {
+        setState(() {
+          _etaMinutes = 0;
+        });
+      } else if (distance < 300) {
+        setState(() {
+          _etaMinutes = -1;
+        });
+      } else {
+        double speed = 30 * 1000 / 3600;
+        double time = distance / speed;
+
+        setState(() {
+          _etaMinutes = (time / 60).ceilToDouble();
+        });
+      }
+    });
   }
 
   @override
@@ -238,21 +300,55 @@ class _StudentHomePageState extends State<StudentHomePage> {
                         const SizedBox(width: 12),
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: const [
-                            Text('Arriving in 5 mins',
-                                style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w500)),
-                            SizedBox(height: 2),
-                            Text('Route: Madambakkam',
-                                style: TextStyle(
+                          children: [
+                            Text(
+                              _etaMinutes == 0
+                                  ? "🟢 Bus has arrived!"
+                                  : _etaMinutes == -1
+                                  ? "🟠 Bus is nearby"
+                                  : "🚌 Arriving in ${_etaMinutes?.toInt() ?? 0} mins",
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: _etaMinutes == 0
+                                    ? Colors.green
+                                    : _etaMinutes == -1
+                                    ? Colors.orange
+                                    : Colors.black87,
+                              ),
+                            ),
+
+                            const SizedBox(height: 6),
+
+                            // 🔥 ROUTE INFO
+                            Row(
+                              children: const [
+                                Icon(Icons.route, size: 16, color: Colors.black54),
+                                SizedBox(width: 6),
+                                Text(
+                                  'Route: Madambakkam',
+                                  style: TextStyle(
                                     fontSize: 14,
-                                    color: Colors.black87)),
-                            SizedBox(height: 2),
-                            Text('Last updated 1 min ago',
-                                style: TextStyle(
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 4),
+                            Row(
+                              children: const [
+                                Icon(Icons.access_time, size: 14, color: Colors.black45),
+                                SizedBox(width: 6),
+                                Text(
+                                  'Live tracking active',
+                                  style: TextStyle(
                                     fontSize: 13,
-                                    color: Colors.black54)),
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ],
                         ),
                       ],
@@ -525,7 +621,7 @@ class AboutApp extends StatelessWidget {
             _infoCard(
               title: 'App Information',
               content:
-              'Version: 1.0.0\nStatus: Active\nDeveloped for: College Students\nPlatform: Android',
+              'Version: 1.0.0\nStatus: Active\nDeveloped by: Sairam Instituition\nPlatform: Android',
               highlight: true,
             ),
           ],
