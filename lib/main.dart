@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:project_spt/student_login_page.dart';
 import 'driver_login_page.dart';
+import 'driver_home_page.dart';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'student_home_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(); // 🔥 Firebase starts here
+  await Firebase.initializeApp();
   runApp(const MyApp());
 }
 
@@ -18,15 +21,12 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-
-      // 🌞 DEFAULT LIGHT THEME ONLY
       theme: ThemeData(
         brightness: Brightness.light,
         colorSchemeSeed: const Color(0xFF00C9A7),
         scaffoldBackgroundColor: Colors.white,
         useMaterial3: true,
       ),
-
       home: const WelcomePage(),
     );
   }
@@ -40,13 +40,44 @@ class WelcomePage extends StatefulWidget {
 }
 
 class _WelcomePageState extends State<WelcomePage> {
+
   @override
   void initState() {
     super.initState();
+    _checkAutoLogin(); // 🔥 AUTO LOGIN CHECK
 
-    // 🔥 TEST FIREBASE CONNECTION (runs ONLY ONCE)
+    // Firebase test connection (optional)
     FirebaseDatabase.instance.ref("test").set("SmartBus connected");
   }
+
+  // 🔥 AUTO LOGIN FUNCTION
+  Future<void> _checkAutoLogin() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+
+    bool? isLoggedIn = prefs.getBool("isLoggedIn");
+    String? role = prefs.getString("role");
+
+    print("AutoLogin -> isLoggedIn: $isLoggedIn");
+    print("AutoLogin -> role: $role");
+
+    if (isLoggedIn == true && role != null) {
+
+      if (role == "student") {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const StudentHomePage()),
+        );
+      }
+
+      else if (role == "driver") {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const DriverHomePage()),
+        );
+      }
+    }
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -70,7 +101,8 @@ class _WelcomePageState extends State<WelcomePage> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // STUDENT LOGIN
+
+                      // STUDENT LOGIN BUTTON
                       SizedBox(
                         width: 220,
                         height: 50,
@@ -104,7 +136,7 @@ class _WelcomePageState extends State<WelcomePage> {
 
                       const SizedBox(height: 20),
 
-                      // DRIVER LOGIN
+                      // DRIVER LOGIN BUTTON
                       SizedBox(
                         width: 220,
                         height: 50,

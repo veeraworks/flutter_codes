@@ -20,19 +20,35 @@ class StudentHomePage extends StatefulWidget {
 }
 
 class _StudentHomePageState extends State<StudentHomePage> {
+  String? studentName;
+  String? routeName;
+  String? displayRoute;
+  String? activeIssue;
+  StreamSubscription<DatabaseEvent>? _issueListener;
+  String lastUpdatedText = "Just now";
+
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   int _currentIndex = 0;
-  String busStatus = 'arriving';
   double? _etaMinutes;
   StreamSubscription<DatabaseEvent>? _busListener;
 
   @override
   void initState() {
     super.initState();
+    _loadStudentInfo();
     _subscribeToRoute();
     _saveFcmToken();
+    _listenToBusIssues();
     _listenToBus();
+    _listenToTemporaryBus();
+  }
+
+  @override
+  void dispose() {
+    _issueListener?.cancel();
+    _busListener?.cancel();
+    super.dispose();
   }
 
   Future<void> _subscribeToRoute() async {
@@ -99,6 +115,36 @@ class _StudentHomePageState extends State<StudentHomePage> {
       ),
     );
   }
+  Future<void> _listenToTemporaryBus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final busId = prefs.getString("busId");
+
+    if (busId == null) return;
+
+    FirebaseDatabase.instance
+        .ref("temporaryBus/$busId")
+        .onValue
+        .listen((event) {
+
+      final data = event.snapshot.value;
+
+      if (data == null) {
+        return;
+      }
+
+      final map = Map<String, dynamic>.from(data as Map);
+
+      if (map["active"] == true) {
+        setState(() {
+          displayRoute = map["tempRoute"];
+        });
+      } else {
+        setState(() {
+          displayRoute = routeName;
+        });
+      }
+    });
+  }
 
   Future<void> _listenToBus() async {
     final prefs = await SharedPreferences.getInstance();
@@ -147,6 +193,50 @@ class _StudentHomePageState extends State<StudentHomePage> {
       }
     });
   }
+  //ISSUE REPORTING BY BUS ALERT
+  Future<void> _listenToBusIssues() async {
+    final prefs = await SharedPreferences.getInstance();
+    final busId = prefs.getString("busId");
+
+    if (busId == null) return;
+
+    _issueListener = FirebaseDatabase.instance
+        .ref("busIssues/$busId")
+        .onValue
+        .listen((event) {
+
+      final data = event.snapshot.value;
+
+      if (data == null) {
+        setState(() {
+          activeIssue = null;
+        });
+        return;
+      }
+
+      final map = Map<String, dynamic>.from(data as Map);
+
+      if (map["status"] == "ACTIVE") {
+        setState(() {
+          activeIssue = map["issueType"];
+        });
+      } else {
+        setState(() {
+          activeIssue = null;
+        });
+      }
+    });
+  }
+
+  //LOAD STUDENT INFO
+  Future<void> _loadStudentInfo() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    setState(() {
+      studentName = prefs.getString("studentId"); // or studentName key if stored
+      routeName = prefs.getString("routeName");
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -162,7 +252,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(20, 50, 20, 20),
               color: const Color(0xFF00BFA6),
-              child: const Column(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   CircleAvatar(
@@ -172,15 +262,22 @@ class _StudentHomePageState extends State<StudentHomePage> {
                         size: 32, color: Color(0xFF00BFA6)),
                   ),
                   SizedBox(height: 12),
-                  Text("VEERA",
-                      style: TextStyle(color: Colors.white, fontSize: 20)),
+                  Text(
+                    studentName ?? "Student",
+                    style: const TextStyle(color: Colors.white, fontSize: 20),
+                  ),
                   Text("Student",
                       style: TextStyle(color: Colors.white70)),
                 ],
               ),
             ),
 
-            _drawerItem(Icons.route, "My Route", () {}),
+            _drawerItem(Icons.map, "Live Map", () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const MapPage()),
+              );
+            }),
 
             _drawerItem(Icons.notifications, "Notifications", () {
               Navigator.push(context,
@@ -242,22 +339,70 @@ class _StudentHomePageState extends State<StudentHomePage> {
                     ],
                   ),
                   const SizedBox(height: 22),
-                  const Text('Welcome, VEERA',
-                      style:
-                      TextStyle(color: Colors.white, fontSize: 26)),
+
+                  Text(
+                    'Welcome, ${studentName ?? "Student"}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 26,
+                    ),
+                  ),
+
                   const SizedBox(height: 6),
-                  const Text('Route: Madambakkam',
-                      style: TextStyle(
-                          color: Colors.white70, fontSize: 16)),
+
+                  Text(
+                    'Route: ${displayRoute ?? routeName ?? "Not Assigned"}',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 16,
+                    ),
+                  ),
+
                   const SizedBox(height: 2),
-                  const Text('Track your bus in real-time',
-                      style: TextStyle(
-                          color: Colors.white70, fontSize: 16)),
+
+                  const Text(
+                    'Track your bus in real-time',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 16,
+                    ),
+                  ),
+
                 ],
               ),
             ),
 
             const SizedBox(height: 16),
+
+            //Issue Reporting by Driver
+            if (activeIssue != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.red),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning, color: Colors.red),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          "ALERT: $activeIssue",
+                          style: const TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
 
             // LIVE BUS STATUS
             Padding(
@@ -287,11 +432,11 @@ class _StudentHomePageState extends State<StudentHomePage> {
                           width: 42,
                           height: 42,
                           decoration: BoxDecoration(
-                            color: busStatus == 'arriving'
-                                ? Colors.amber
-                                : busStatus == 'delayed'
+                            color: _etaMinutes == 0
+                                ? Colors.green
+                                : _etaMinutes == -1
                                 ? Colors.orange
-                                : Colors.red,
+                                : Colors.amber,
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(Icons.directions_bus,
@@ -302,11 +447,13 @@ class _StudentHomePageState extends State<StudentHomePage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              _etaMinutes == 0
+                              _etaMinutes == null
+                                  ? "Calculating..."
+                                  : _etaMinutes == 0
                                   ? "🟢 Bus has arrived!"
                                   : _etaMinutes == -1
                                   ? "🟠 Bus is nearby"
-                                  : "🚌 Arriving in ${_etaMinutes?.toInt() ?? 0} mins",
+                                  : "🚌 Arriving in ${_etaMinutes!.toInt()} mins",
                               style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
@@ -322,12 +469,12 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
                             // 🔥 ROUTE INFO
                             Row(
-                              children: const [
-                                Icon(Icons.route, size: 16, color: Colors.black54),
-                                SizedBox(width: 6),
+                              children: [
+                                const Icon(Icons.route, size: 16, color: Colors.black54),
+                                const SizedBox(width: 6),
                                 Text(
-                                  'Route: Madambakkam',
-                                  style: TextStyle(
+                                  'Route: ${displayRoute ?? routeName ?? "Not Assigned"}',
+                                  style: const TextStyle(
                                     fontSize: 14,
                                     color: Colors.black87,
                                   ),
@@ -439,7 +586,6 @@ class _StudentHomePageState extends State<StudentHomePage> {
             Navigator.push(context,
                 MaterialPageRoute(builder: (_) => const NotificationsPage()));
           } else if (index == 2) {
-            // ✅ HELP PAGE
             Navigator.push(context,
                 MaterialPageRoute(builder: (_) => const HelpPage()));
           } else if (index == 3) {
@@ -469,7 +615,6 @@ class _StudentHomePageState extends State<StudentHomePage> {
   }
 }
 
-
 /* ================= NOTIFICATIONS PAGE ================= */
 
 class NotificationsPage extends StatelessWidget {
@@ -487,7 +632,7 @@ class NotificationsPage extends StatelessWidget {
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
-        children: const [
+        children: [
           NotificationCard(
             title: 'Bus Arriving',
             message: 'Your bus will arrive in 5 minutes.',
@@ -540,7 +685,10 @@ class NotificationCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+          ),
         ],
       ),
       child: Row(
@@ -561,15 +709,18 @@ class NotificationCard extends StatelessWidget {
               children: [
                 Text(title,
                     style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w600)),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600)),
                 const SizedBox(height: 4),
                 Text(message,
                     style: const TextStyle(
-                        fontSize: 14, color: Colors.black87)),
+                        fontSize: 14,
+                        color: Colors.black87)),
                 const SizedBox(height: 6),
                 Text(time,
                     style: const TextStyle(
-                        fontSize: 12, color: Colors.black54)),
+                        fontSize: 12,
+                        color: Colors.black54)),
               ],
             ),
           ),
@@ -671,3 +822,62 @@ Widget _infoCard({
     ),
   );
 }
+// ================= HELP & SUPPORT PAGE =================
+class HelpPage extends StatelessWidget {
+  const HelpPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF6F3F7),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF00BFA6),
+        elevation: 0,
+        title: const Text(
+          'Help & Support',
+          style: TextStyle(color: Colors.white),
+        ),
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+
+            // 🔷 HOW TO USE
+            _infoCard(
+              title: "How to Track Your Bus",
+              content:
+              "1. Open the Home page.\n"
+                  "2. View Live Bus Status.\n"
+                  "3. Tap 'Open Map' for full tracking.\n"
+                  "4. Check ETA and bus arrival updates.",
+            ),
+            const SizedBox(height: 20),
+
+            // 🔷 COMMON ISSUES
+            _infoCard(
+              title: "Common Issues",
+              content:
+              "• Bus not updating → Check internet.\n"
+                  "• Location not working → Enable GPS.\n"
+                  "• No notifications → Enable notification permission.",
+            ),
+            const SizedBox(height: 20),
+
+            // 🔷 CONTACT
+            _infoCard(
+              title: "Contact Support",
+              content:
+              "For technical issues :\n\n"
+                  "Email: support@bustrackpro.com\n"
+                  "Phone: +91 9876543210",
+            ),
+            const SizedBox(height: 30),
+          ],
+        ),
+      ),
+    );
+  }
+}
+

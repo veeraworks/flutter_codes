@@ -44,6 +44,8 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
     // ✅ SAVE REAL VALUES (NO HARDCODE)
     await prefs.setString("driverName", widget.driverName);
     await prefs.setString("phoneNumber", widget.phoneNumber);
+    await prefs.setBool("isLoggedIn", true); // 🔥 ADD THIS
+    await prefs.setString("role", "driver"); // 🔥 ADD THIS
 
     // ⚠️ Temporary defaults (until Firestore mapping is enforced)
     await prefs.setString("originalBus", "9");

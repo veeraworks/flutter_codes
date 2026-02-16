@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'student_home_page.dart';
 import 'student_otp_page.dart';
 import 'student_signup_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class StudentLoginPage extends StatefulWidget {
   const StudentLoginPage({super.key});
@@ -31,6 +32,8 @@ class _StudentLoginPageState extends State<StudentLoginPage>
     _shakeAnimation = Tween<double>(begin: 0, end: 10)
         .chain(CurveTween(curve: Curves.elasticIn))
         .animate(_shakeController);
+
+    _checkAutoLogin(); // 🔥 ADD THIS
   }
 
   @override
@@ -65,6 +68,22 @@ class _StudentLoginPageState extends State<StudentLoginPage>
           content: Text("Invalid ID or Password"),
           backgroundColor: Colors.red,
         ),
+      );
+    }
+  }
+  Future<void> _checkAutoLogin() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+
+    bool? isLoggedIn = prefs.getBool("isLoggedIn");
+    String? role = prefs.getString("role");
+
+    print("AutoLogin -> isLoggedIn: $isLoggedIn");
+    print("AutoLogin -> role: $role");
+
+    if (isLoggedIn == true && role == "student") {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const StudentHomePage()),
       );
     }
   }

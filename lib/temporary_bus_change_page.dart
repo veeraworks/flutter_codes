@@ -77,13 +77,13 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
         : originalBus;
 
     try {
-      // ================= 1️⃣ UPDATE LOCAL STORAGE =================
+      // ================= UPDATE LOCAL STORAGE =================
       await prefs.setString("busNumber", newBus);
       await prefs.setString("tempBusNumber", newBus);
       await prefs.setString("routeName", selectedRoute);
       await prefs.setBool("isTempBusActive", true);
 
-      // ================= 2️⃣ UPDATE FIREBASE REALTIME DB =================
+      // ================= UPDATE FIREBASE REALTIME DB =================
       await FirebaseDatabase.instance
           .ref("temporaryBus/$busId")
           .set({
@@ -93,7 +93,7 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
         "updatedAt": ServerValue.timestamp,
       });
 
-      // ================= 3️⃣ UPDATE BACKEND SERVER =================
+      // ================= UPDATE BACKEND SERVER =================
       await http.post(
         Uri.parse("http://10.17.162.165:3000/temporary-bus"),
         headers: {"Content-Type": "application/json"},
@@ -105,7 +105,18 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
         }),
       );
 
-      // ================= 4️⃣ UPDATE UI =================
+      //================== NOTIFY USERS ON ROUTE =================
+      await http.post(
+        Uri.parse("http://10.17.162.165:3000/notify-route"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "route": selectedRoute,
+          "title": "Temporary Bus Update",
+          "body": "Bus changed to $newBus temporarily on $selectedRoute route.",
+        }),
+      );
+
+      // ================= UPDATE UI =================
       setState(() {
         isTempActive = true;
         currentBus = newBus;
@@ -178,6 +189,16 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
     } catch (e) {
       print("Backend error: $e");
     }
+
+    await http.post(
+      Uri.parse("http://10.17.162.165:3000/notify-route"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "route": originalRoute,
+        "title": "Bus Restored",
+        "body": "Bus number restored to $originalBus.",
+      }),
+    );
 
     setState(() {
       isTempActive = false;
