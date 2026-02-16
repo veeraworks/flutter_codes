@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:http/http.dart' as http;
 
 class StudentSignupPage extends StatefulWidget {
   const StudentSignupPage({super.key});
@@ -22,6 +24,8 @@ class _StudentSignupPageState extends State<StudentSignupPage> {
   bool otpSent = false;
   bool isLoading = false;
   String verificationId = "";
+  bool isPreRegistered = false;
+  bool isValidRegisterNumber = false;
 
   String selectedRoute = "Select Route";
   String selectedStop = "Select Stop";
@@ -216,6 +220,80 @@ class _StudentSignupPageState extends State<StudentSignupPage> {
   List<String> get stops =>
       selectedRoute != "Select Route" ? routeStops[selectedRoute]! : [];
 
+  //================= CHECK REGISTER NUMBER =================
+  Future<void> checkRegisterNumber() async {
+
+    if (regController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Enter Register Number")),
+      );
+      return;
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse("http://10.17.162.165:3000/check-student"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "registerNumber": regController.text.trim(),
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+
+      if (data["status"] == "ALREADY_REGISTERED") {
+        setState(() {
+          isValidRegisterNumber = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("This register number is already registered"),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      if (data["status"] == "NOT_FOUND") {
+        setState(() {
+          isValidRegisterNumber = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Invalid Register Number"),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      if (data["status"] == "PRE_REGISTERED") {
+        setState(() {
+          selectedRoute = data["route"];
+          selectedStop = data["stop"];
+          isValidRegisterNumber = true;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Register number verified"),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Server error"),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   // ---------------- SEND OTP ----------------
   Future<void> sendOtp() async {
     setState(() => isLoading = true);
@@ -241,6 +319,42 @@ class _StudentSignupPageState extends State<StudentSignupPage> {
         verificationId = vid;
       },
     );
+  }
+//to pre-fill the route and stop dropdowns
+  Future<void> fetchStudentDetails(String registerNumber) async {
+    try {
+      final response = await http.post(
+        Uri.parse("http://YOUR_IP:3000/get-student-by-reg"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "registerNumber": registerNumber,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        setState(() {
+          selectedRoute = data["route"];
+          selectedStop = data["stop"];
+          isPreRegistered = true; // 🔥 LOCK DROPDOWNS
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Pre-registered student found")),
+        );
+      } else {
+        setState(() {
+          isPreRegistered = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Student not pre-registered")),
+        );
+      }
+    } catch (e) {
+      print("Error fetching student: $e");
+    }
   }
 
   // ---------------- VERIFY OTP & SAVE ----------------
@@ -337,24 +451,61 @@ class _StudentSignupPageState extends State<StudentSignupPage> {
 
                         const SizedBox(height: 16),
 
-                        inputBox(nameController, "Register Number", Icons.badge),
+                        TextField(
+                          controller: nameController,
+                          decoration: InputDecoration(
+                            prefixIcon: const Icon(Icons.badge, color: Colors.teal),
+                            hintText: "Register Number",
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          onEditingComplete: () {
+                            fetchStudentDetails(nameController.text.trim());
+                          },
+                        ),
                         inputBox(regController, "Student Name", Icons.person),
                         inputBox(phoneController, "Phone Number", Icons.phone,
                             type: TextInputType.phone),
 
-                        dropDownBox("Route Name",
-                            ["Select Route", ...routes], selectedRoute,
-                                (val) {
-                              setState(() {
-                                selectedRoute = val!;
-                                selectedStop = "Select Stop";
-                              });
-                            }),
+                        DropdownButtonFormField<String>(
+                          value: selectedRoute,
+                          items: ["Select Route", ...routes]
+                              .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                              .toList(),
+                          onChanged: isPreRegistered
+                              ? null   // 🔒 disabled
+                              : (val) {
+                            setState(() {
+                              selectedRoute = val!;
+                              selectedStop = "Select Stop";
+                            });
+                          },
+                          decoration: InputDecoration(
+                            prefixIcon: const Icon(Icons.route, color: Colors.teal),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
 
-                        dropDownBox("Bus Stop",
-                            ["Select Stop", ...stops], selectedStop, (val) {
-                              setState(() => selectedStop = val!);
-                            }),
+                        DropdownButtonFormField<String>(
+                          value: selectedStop,
+                          items: ["Select Stop", ...stops]
+                              .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                              .toList(),
+                          onChanged: isPreRegistered
+                              ? null   // 🔒 disabled
+                              : (val) {
+                            setState(() => selectedStop = val!);
+                          },
+                          decoration: InputDecoration(
+                            prefixIcon: const Icon(Icons.location_on, color: Colors.teal),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
 
                         if (otpSent)
                           inputBox(otpController, "Enter OTP", Icons.lock,
@@ -365,7 +516,14 @@ class _StudentSignupPageState extends State<StudentSignupPage> {
                         isLoading
                             ? const CircularProgressIndicator()
                             :ElevatedButton(
-                          onPressed: otpSent ? verifyOtpAndRegister : sendOtp,
+                          onPressed: otpSent
+                              ? verifyOtpAndRegister
+                              : () async {
+                            await checkRegisterNumber();
+                            if (isValidRegisterNumber) {
+                              sendOtp();
+                            }
+                          },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.teal,
                           ),
@@ -377,7 +535,6 @@ class _StudentSignupPageState extends State<StudentSignupPage> {
                             ),
                           ),
                         )
-
                       ],
                     ),
                   ),
@@ -408,8 +565,12 @@ class _StudentSignupPageState extends State<StudentSignupPage> {
     );
   }
 
-  Widget dropDownBox(String hint, List<String> items, String value,
-      Function(String?) onChanged) {
+  Widget dropDownBox(
+      String hint,
+      List<String> items,
+      String value,
+      Function(String?) onChanged,
+      ) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: DropdownButtonFormField<String>(
@@ -417,9 +578,15 @@ class _StudentSignupPageState extends State<StudentSignupPage> {
         items: items
             .map((e) => DropdownMenuItem(value: e, child: Text(e)))
             .toList(),
-        onChanged: onChanged,
+
+        // 🔒 Disable if register number is verified
+        onChanged: isValidRegisterNumber ? null : onChanged,
+
         decoration: InputDecoration(
-          prefixIcon: const Icon(Icons.route, color: Colors.teal),
+          prefixIcon: Icon(
+            hint == "Route Name" ? Icons.route : Icons.location_on,
+            color: Colors.teal,
+          ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
           ),
