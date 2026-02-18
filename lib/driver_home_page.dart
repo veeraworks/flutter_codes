@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
@@ -41,6 +43,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
   bool locationSyncOn = false;
 
   String? busId;
+  String? currentTripId;
   StreamSubscription<Position>? positionStream;
 
   // 🗺️ MAP STATE
@@ -58,6 +61,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
   @override
   void initState() {
     super.initState();
+    _refreshDriverProfile();
     _initialize();
   }
 
@@ -90,25 +94,18 @@ class _DriverHomePageState extends State<DriverHomePage> {
   }
 // ================= LOAD BUS INFO (ADDED) =================
   Future<void> _loadBusInfo() async {
-    if (busId == null) return;
+    final prefs = await SharedPreferences.getInstance();
 
-    final snapshot = await FirebaseDatabase.instance
-        .ref("buses/$busId")
-        .get();
+    setState(() {
+      permBusNumber = prefs.getString("busNumber") ?? "-";
+      permRouteName = prefs.getString("routeName") ?? "-";
+      shift = prefs.getString("shift") ?? "-";
 
-    if (snapshot.exists) {
-      final data = Map<String, dynamic>.from(snapshot.value as Map);
+      busNumber = permBusNumber;
+      routeName = permRouteName;
+    });
 
-      setState(() {
-        busNumber = data["busNumber"] ?? "-";
-        routeName = data["routeName"] ?? "-";
-        shift = data["shift"] ?? "-";
-      });
-
-      print("Loaded from Firebase → $data");
-    } else {
-      print("No bus data found for $busId");
-    }
+    print("Loaded from SharedPreferences → $permBusNumber | $permRouteName");
   }
 
   // ---------------- CHECK GPS / INTERNET ---------------------------------------
@@ -203,7 +200,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
       // Update Firebase only if busId exists (non-blocking)
       if (busId != null) {
-        FirebaseDatabase.instance.ref("buses/$busId").set({
+        FirebaseDatabase.instance.ref("buses/$busId").update({
           "lat": position.latitude,
           "lng": position.longitude,
           "bearing": position.heading,
@@ -214,6 +211,68 @@ class _DriverHomePageState extends State<DriverHomePage> {
         });
       }
     });
+  }
+  //==================== START TRIP WITH MODE (NEW) =================
+  Future<void> _startTripWithMode(String mode) async {
+    if (busId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Bus ID not found")),
+      );
+      return;
+    }
+
+    final response = await http.post(
+      Uri.parse("http://10.114.21.165:3000/drivers/start-trip"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "busId": busId,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+
+      currentTripId = data["tripId"]; // 🔥 STORE TRIP ID
+
+      setState(() {
+        tripStarted = true;
+      });
+
+      _startLocationUpdates();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("$mode trip started")),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Failed to start trip")),
+      );
+    }
+  }
+
+  //==================== END TRIP WITH MODE (NEW) =================
+  Future<void> _endTripFromBackend() async {
+    if (busId == null || currentTripId == null) return;
+
+    final response = await http.post(
+      Uri.parse("http://10.114.21.165:3000/drivers/end-trip"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "busId": busId,
+        "tripId": currentTripId,
+      }),
+    );
+
+    await positionStream?.cancel();
+
+    setState(() {
+      tripStarted = false;
+      currentTripId = null;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Trip Ended")),
+    );
   }
 
   // ---------------- START / END TRIP --------------------------------------
@@ -333,6 +392,27 @@ class _DriverHomePageState extends State<DriverHomePage> {
     await _checkStatuses();
   }
 
+  Future<void> _refreshDriverProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    final phone = prefs.getString("phone");
+
+    if (phone == null) return;
+
+    final response = await http.get(
+      Uri.parse("http://10.114.21.165:3000/drivers/profile?phone=$phone"),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+
+      setState(() {
+        busNumber = data["busId"];
+        routeName = data["busName"];
+      });
+
+      await prefs.setString("busId", data["busId"]);
+    }
+  }
   // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
@@ -556,32 +636,74 @@ class _DriverHomePageState extends State<DriverHomePage> {
                 ),
               ),
             ),
-
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-            child: GestureDetector(
-              onTap: _toggleTrip,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                width: double.infinity,
+            child: tripStarted
+                ? GestureDetector(
+              onTap: _endTripFromBackend,
+              child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 18),
                 decoration: BoxDecoration(
-                  color: tripStarted ? Colors.red : const Color(0xFF00BFA6),
+                  color: Colors.red,
                   borderRadius: BorderRadius.circular(18),
                 ),
-                child: Center(
+                child: const Center(
                   child: Text(
-                    tripStarted ? 'End Trip' : 'Start Trip',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    'End Trip',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600),
                   ),
                 ),
               ),
+            )
+                : Column(
+              children: [
+                GestureDetector(
+                  onTap: () => _startTripWithMode("MORNING"),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00BFA6),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: const Center(
+                      child: Text(
+                        'Start Morning Trip',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                GestureDetector(
+                  onTap: () => _startTripWithMode("EVENING"),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    decoration: BoxDecoration(
+                      color: Colors.orange,
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: const Center(
+                      child: Text(
+                        'Start Evening Trip',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          )
+          ),
         ],
       ),
     );
