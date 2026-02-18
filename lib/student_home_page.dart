@@ -5,9 +5,7 @@ import 'settings_page.dart';
 import 'map_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'main.dart';
-import 'help_page.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -25,17 +23,23 @@ class _StudentHomePageState extends State<StudentHomePage> {
   String? displayRoute;
   String? activeIssue;
   StreamSubscription<DatabaseEvent>? _issueListener;
+  StreamSubscription<DatabaseEvent>? _tempBusListener;
+  StreamSubscription<DatabaseEvent>? _busListener;
   String lastUpdatedText = "Just now";
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   int _currentIndex = 0;
   double? _etaMinutes;
-  StreamSubscription<DatabaseEvent>? _busListener;
+
+  String? _prevTempRoute; // track previous temp route to avoid duplicate snackbars
 
   @override
   void initState() {
     super.initState();
+
+    _requestPermission();
+    _listenForMessages();
     _loadStudentInfo();
     _subscribeToRoute();
     _saveFcmToken();
@@ -48,19 +52,64 @@ class _StudentHomePageState extends State<StudentHomePage> {
   void dispose() {
     _issueListener?.cancel();
     _busListener?.cancel();
+    _tempBusListener?.cancel();
     super.dispose();
   }
 
   Future<void> _subscribeToRoute() async {
     final prefs = await SharedPreferences.getInstance();
     final routeName = prefs.getString("routeName");
+    final busId = prefs.getString("busId");
 
-    if (routeName != null) {
-      await FirebaseMessaging.instance.subscribeToTopic(routeName);
-      print("Subscribed to topic: $routeName");
+    print("Saved busId: $busId");
+    print("Saved routeName: $routeName");
+
+    if (routeName != null && routeName.isNotEmpty) {
+      await FirebaseMessaging.instance
+          .subscribeToTopic(routeName.toLowerCase());
+      print("✅ Subscribed to route topic: ${routeName.toLowerCase()}");
     }
+
+    if (busId != null && busId.isNotEmpty) {
+      await FirebaseMessaging.instance
+          .subscribeToTopic(busId.toLowerCase());
+      print("✅ Subscribed to bus topic: ${busId.toLowerCase()}");
+    }
+
+    String? token = await FirebaseMessaging.instance.getToken();
+    print("FCM TOKEN: $token");
   }
 
+  Future<void> _requestPermission() async {
+    NotificationSettings settings =
+    await FirebaseMessaging.instance.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
+    print("Permission status: ${settings.authorizationStatus}");
+  }
+
+  void _listenForMessages() {
+
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+
+      print("🔔 Notification Received!");
+      print("Title: ${message.notification?.title}");
+      print("Body: ${message.notification?.body}");
+
+      if (mounted && message.notification != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              "${message.notification!.title}\n${message.notification!.body}",
+            ),
+          ),
+        );
+      }
+    });
+  }
   Future<void> _saveFcmToken() async {
     final prefs = await SharedPreferences.getInstance();
     final routeName = prefs.getString("routeName");
@@ -121,7 +170,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
     if (busId == null) return;
 
-    FirebaseDatabase.instance
+    _tempBusListener = FirebaseDatabase.instance
         .ref("temporaryBus/$busId")
         .onValue
         .listen((event) {
@@ -135,13 +184,34 @@ class _StudentHomePageState extends State<StudentHomePage> {
       final map = Map<String, dynamic>.from(data as Map);
 
       if (map["active"] == true) {
+        final String? temp = map["tempRoute"] as String?;
         setState(() {
-          displayRoute = map["tempRoute"];
+          displayRoute = temp ?? routeName;
         });
+
+        // show a short in-app notification if changed
+        if (temp != null && temp != _prevTempRoute) {
+          _prevTempRoute = temp;
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text("Temporary route active: $temp")),
+            );
+          }
+        }
       } else {
         setState(() {
           displayRoute = routeName;
         });
+
+        // notify cleared once
+        if (_prevTempRoute != null) {
+          _prevTempRoute = null;
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Temporary route cleared")),
+            );
+          }
+        }
       }
     });
   }
@@ -193,6 +263,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
       }
     });
   }
+
   //ISSUE REPORTING BY BUS ALERT
   Future<void> _listenToBusIssues() async {
     final prefs = await SharedPreferences.getInstance();
@@ -233,8 +304,16 @@ class _StudentHomePageState extends State<StudentHomePage> {
     final prefs = await SharedPreferences.getInstance();
 
     setState(() {
-      studentName = prefs.getString("studentId"); // or studentName key if stored
+      studentName = prefs.getString("studentId");
       routeName = prefs.getString("routeName");
+
+      // 🔥 LOAD DISPLAY ROUTE (temp if active, otherwise permanent)
+      bool isTempActive = prefs.getBool("isTempBusActive") ?? false;
+      if (isTempActive) {
+        displayRoute = prefs.getString("tempRoute") ?? routeName;
+      } else {
+        displayRoute = routeName;
+      }
     });
   }
 
@@ -350,8 +429,9 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
                   const SizedBox(height: 6),
 
+                  // 🔥 SHOW ACTUAL ROUTE NAME
                   Text(
-                    'Route: ${displayRoute ?? routeName ?? "Not Assigned"}',
+                    'Route: ${displayRoute ?? "Not Assigned"}',
                     style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 16,

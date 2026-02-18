@@ -232,7 +232,7 @@ class _StudentSignupPageState extends State<StudentSignupPage> {
 
     try {
       final response = await http.post(
-        Uri.parse("http://10.17.162.165:3000/check-student"),
+        Uri.parse("http://10.114.21.165:3000/check-student"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "registerNumber": regController.text.trim(),
@@ -324,7 +324,7 @@ class _StudentSignupPageState extends State<StudentSignupPage> {
   Future<void> fetchStudentDetails(String registerNumber) async {
     try {
       final response = await http.post(
-        Uri.parse("http://YOUR_IP:3000/get-student-by-reg"),
+        Uri.parse("http://10.114.21.165:3000/get-student-by-reg"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "registerNumber": registerNumber,
@@ -470,7 +470,7 @@ class _StudentSignupPageState extends State<StudentSignupPage> {
 
                         DropdownButtonFormField<String>(
                           value: selectedRoute,
-                          items: ["Select Route", ...routes]
+                          items: ["Select Bus Name", ...routes]
                               .map((e) => DropdownMenuItem(value: e, child: Text(e)))
                               .toList(),
                           onChanged: isPreRegistered
@@ -491,7 +491,7 @@ class _StudentSignupPageState extends State<StudentSignupPage> {
 
                         DropdownButtonFormField<String>(
                           value: selectedStop,
-                          items: ["Select Stop", ...stops]
+                          items: ["Select Boarding Point", ...stops]
                               .map((e) => DropdownMenuItem(value: e, child: Text(e)))
                               .toList(),
                           onChanged: isPreRegistered

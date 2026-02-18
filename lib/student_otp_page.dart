@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'student_home_page.dart';
 
@@ -18,52 +20,64 @@ class StudentOtpPage extends StatefulWidget {
 
 class _StudentOtpPageState extends State<StudentOtpPage> {
   final TextEditingController otpController = TextEditingController();
-
   bool isLoading = false;
 
   Future<void> _submitOtp() async {
     if (otpController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Please enter OTP"),
-          backgroundColor: Colors.red,
-        ),
+        const SnackBar(content: Text("Enter OTP")),
       );
       return;
     }
 
-    // 🔥 Start loading
-    setState(() {
-      isLoading = true;
-    });
-
-    // Simulate verification delay (replace with real OTP verification later)
-    await Future.delayed(const Duration(seconds: 1));
+    setState(() => isLoading = true);
 
     try {
-      // ✅ SAVE SESSION
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-      await prefs.setBool("isLoggedIn", true);
-      await prefs.setString("role", "student");
-      await prefs.setString("studentId", widget.studentId);
-
-      // ✅ Navigate to Home
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (context) => const StudentHomePage()),
-            (route) => false,
+      final response = await http.post(
+        Uri.parse("http://10.114.21.165:3000/students/check-student"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "regNo": widget.studentId,
+          "phone": widget.phoneNumber,
+        }),
       );
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data["student"] != null) {
+
+        final student = data["student"];
+
+        final prefs = await SharedPreferences.getInstance();
+
+        await prefs.setBool("isLoggedIn", true);
+        await prefs.setString("role", "student");
+        await prefs.setString("studentId", student["regNo"] ?? "");
+        await prefs.setString("studentName", student["name"] ?? "");
+        await prefs.setString("routeName", student["route"] ?? "");
+        await prefs.setString("busNumber", student["busNo"] ?? "");
+        await prefs.setString("busId", student["busId"] ?? ""); // 🔥 ADD THIS
+        await prefs.setString("boardingPoint", student["boardingPoint"] ?? "");
+
+        if (!mounted) return;
+
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const StudentHomePage()),
+              (route) => false,
+        );
+
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Student not found")),
+        );
+      }
     } catch (e) {
-      setState(() {
-        isLoading = false;
-      });
-
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Something went wrong"),
-          backgroundColor: Colors.red,
-        ),
+        const SnackBar(content: Text("Server not reachable")),
       );
+    } finally {
+      if (mounted) setState(() => isLoading = false);
     }
   }
 
