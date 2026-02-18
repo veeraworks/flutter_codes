@@ -391,7 +391,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
     await _checkStatuses();
   }
-
   Future<void> _refreshDriverProfile() async {
     final prefs = await SharedPreferences.getInstance();
     final phone = prefs.getString("phone");
@@ -406,13 +405,19 @@ class _DriverHomePageState extends State<DriverHomePage> {
       final data = jsonDecode(response.body);
 
       setState(() {
-        busNumber = data["busId"];
-        routeName = data["busName"];
+        permBusNumber = data["busId"];
+        permRouteName = data["busName"];
+
+        busNumber = permBusNumber;
+        routeName = permRouteName;
       });
 
       await prefs.setString("busId", data["busId"]);
+      await prefs.setString("busNumber", data["busId"]);
+      await prefs.setString("routeName", data["busName"]);
     }
   }
+
   // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
