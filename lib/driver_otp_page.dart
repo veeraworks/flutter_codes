@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'driver_home_page.dart';
 
@@ -20,49 +22,76 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
   final TextEditingController otpController = TextEditingController();
   bool isLoading = false;
 
-  @override
-  void dispose() {
-    otpController.dispose();
-    super.dispose();
-  }
-
   Future<void> submitOtp() async {
     if (otpController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please enter OTP")),
+        const SnackBar(content: Text("Enter OTP")),
       );
       return;
     }
 
     setState(() => isLoading = true);
 
-    // ⏳ Simulate OTP verification (Firebase Auth will replace this later)
-    await Future.delayed(const Duration(seconds: 1));
+    try {
+      final response = await http.post(
+        Uri.parse("http://10.114.21.165:3000/drivers/check-driver"), // ✅ FIXED IP
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "phone": widget.phoneNumber,
+        }),
+      ).timeout(const Duration(seconds: 8));
 
-    final prefs = await SharedPreferences.getInstance();
 
-    // ✅ SAVE REAL VALUES (NO HARDCODE)
-    await prefs.setString("driverName", widget.driverName);
-    await prefs.setString("phoneNumber", widget.phoneNumber);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
 
-    // ⚠️ Temporary defaults (until Firestore mapping is enforced)
-    await prefs.setString("originalBus", "9");
-    await prefs.setString("originalRoute", "Madambakkam");
-    await prefs.setString("shift", "Morning");
+        if (data["driver"] != null) {
 
-    // Reset temporary-bus flags on fresh login
-    await prefs.setBool("isTemporaryApplied", false);
+          final driver = data["driver"];
 
-    setState(() => isLoading = false);
+          print("Driver Data → $driver"); // 🔍 Debug
 
-    if (!mounted) return;
+          final prefs = await SharedPreferences.getInstance();
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const DriverHomePage(),
-      ),
-    );
+          // ✅ SAVE ALL REQUIRED VALUES
+          await prefs.setString("driverName", driver["name"] ?? "");
+          await prefs.setString("phoneNumber", widget.phoneNumber);
+          await prefs.setString("busId", driver["busId"] ?? "");
+          await prefs.setString("busNumber", driver["busName"] ?? "");
+          await prefs.setString("routeName", driver["busName"] ?? "");
+          await prefs.setString("shift", driver["shift"] ?? "Morning");
+          await prefs.setBool("isTempBusActive", false);
+          await prefs.setBool("isLoggedIn", true);
+          await prefs.setString("role", "driver");
+
+          if (!mounted) return;
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const DriverHomePage(),
+            ),
+          );
+
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Driver not found")),
+          );
+        }
+      }
+      else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Server error ${response.statusCode}")),
+        );
+      }
+
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Network error")),
+      );
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
   }
 
   @override
@@ -108,7 +137,9 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
                     color: Color(0xFF00BFA6),
                   ),
                 ),
+
                 const SizedBox(height: 20),
+
                 const Text(
                   "ENTER OTP",
                   style: TextStyle(
@@ -118,7 +149,9 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
                     color: Color(0xFF00BFA6),
                   ),
                 ),
+
                 const SizedBox(height: 6),
+
                 Text(
                   "OTP sent to ${widget.phoneNumber}",
                   style: const TextStyle(
@@ -126,7 +159,9 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
                     color: Colors.black54,
                   ),
                 ),
+
                 const SizedBox(height: 22),
+
                 TextField(
                   controller: otpController,
                   keyboardType: TextInputType.number,
@@ -137,10 +172,24 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
                     prefixIcon: const Icon(Icons.sms),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(18),
+                      borderSide: const BorderSide(color: Color(0xFF00BFA6)),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(18),
+                      borderSide: const BorderSide(color: Color(0xFF00C9A7)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(18),
+                      borderSide: const BorderSide(
+                        color: Color(0xFF00BFA6),
+                        width: 2,
+                      ),
                     ),
                   ),
                 ),
+
                 const SizedBox(height: 22),
+
                 SizedBox(
                   width: double.infinity,
                   height: 52,

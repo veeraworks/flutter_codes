@@ -29,6 +29,12 @@ class _DriverHomePageState extends State<DriverHomePage> {
   String shift = "-";
   bool isTempBusActive = false;
 
+  // NEW: keep permanent and temporary values separate
+  String permBusNumber = "-";
+  String permRouteName = "-";
+  String? tempBusNumber;
+  String? tempRouteName;
+
 
   bool gpsOn = false;
   bool internetOn = false;
@@ -84,15 +90,25 @@ class _DriverHomePageState extends State<DriverHomePage> {
   }
 // ================= LOAD BUS INFO (ADDED) =================
   Future<void> _loadBusInfo() async {
-    final prefs = await SharedPreferences.getInstance();
+    if (busId == null) return;
 
-    setState(() {
-      busNumber = prefs.getString("busNumber") ?? "-";
-      routeName = prefs.getString("routeName") ?? "-";
-      shift = prefs.getString("shift") ?? "-";
-      isTempBusActive = prefs.getBool("isTempBusActive") ?? false;
-    });
-    print("HOME RELOAD → busNumber=$busNumber, isTempBusActive=$isTempBusActive");
+    final snapshot = await FirebaseDatabase.instance
+        .ref("buses/$busId")
+        .get();
+
+    if (snapshot.exists) {
+      final data = Map<String, dynamic>.from(snapshot.value as Map);
+
+      setState(() {
+        busNumber = data["busNumber"] ?? "-";
+        routeName = data["routeName"] ?? "-";
+        shift = data["shift"] ?? "-";
+      });
+
+      print("Loaded from Firebase → $data");
+    } else {
+      print("No bus data found for $busId");
+    }
   }
 
   // ---------------- CHECK GPS / INTERNET ---------------------------------------
@@ -190,6 +206,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
         FirebaseDatabase.instance.ref("buses/$busId").set({
           "lat": position.latitude,
           "lng": position.longitude,
+          "bearing": position.heading,
           "updatedAt": ServerValue.timestamp,
         }).catchError((e) {
           // optional: log error but don't block UI
@@ -450,21 +467,25 @@ class _DriverHomePageState extends State<DriverHomePage> {
           _infoCard(
             title: 'Bus Information',
             children: [
-              _infoRow('Route', routeName),
-              _infoRow('Bus Number', busNumber),
+              // show permanent values as before
+              _infoRow('Route', permRouteName),
+              _infoRow('Bus Number', permBusNumber),
               _infoRow('Shift', shift),
 
-              if (isTempBusActive)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    "TEMPORARY BUS ACTIVE",
-                    style: const TextStyle(
-                      color: Colors.orange,
-                      fontWeight: FontWeight.bold,
-                    ),
+              // show temporary details only under this card (do not replace permanent display)
+              if (isTempBusActive) ...[
+                const Divider(height: 18),
+                const Text(
+                  "Temporary Bus Changes",
+                  style: TextStyle(
+                    color: Colors.orange,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
+                const SizedBox(height: 6),
+                _infoRow('Temp Route', tempRouteName ?? "-"),
+                _infoRow('Temp Bus Number', tempBusNumber ?? "-"),
+              ],
             ],
           ),
 

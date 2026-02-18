@@ -50,7 +50,7 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
     // 2️⃣ Call backend to send notification
     try {
       await http.post(
-        Uri.parse("http://10.17.162.165:3000/notify-route"),
+        Uri.parse("http://10.114.21.165:3000/notify-route"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "route": routeName,
