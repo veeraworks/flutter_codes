@@ -34,7 +34,7 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
 
     try {
       final response = await http.post(
-        Uri.parse("http://10.114.21.165:3000/students/check-student"),
+        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/check-student"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "regNo": widget.studentId,

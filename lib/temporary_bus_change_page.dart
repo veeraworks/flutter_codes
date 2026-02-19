@@ -101,7 +101,7 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
 
       // ✅ CALL BACKEND (SENDS NOTIFICATION TO BUS TOPIC)
       await http.post(
-        Uri.parse("http://10.114.21.165:3000/temporary-bus"),
+        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/temporary-bus"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "busId": busId,
@@ -169,7 +169,7 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
 
       // ✅ CALL BACKEND (NOTIFY RESTORE)
       await http.post(
-        Uri.parse("http://10.114.21.165:3000/temporary-bus"),
+        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/temporary-bus"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
       "busId": busId,

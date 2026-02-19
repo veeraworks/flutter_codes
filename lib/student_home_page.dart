@@ -88,7 +88,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
     if (regNo == null) return;
 
     final response = await http.get(
-      Uri.parse("http://10.114.21.165:3000/students/profile?regNo=$regNo"),
+      Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/profile?regNo=$regNo"),
     );
 
     if (response.statusCode == 200) {

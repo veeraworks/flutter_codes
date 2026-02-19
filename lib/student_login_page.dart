@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'student_otp_page.dart';
 import 'student_signup_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'config.dart';
+
 
 class StudentLoginPage extends StatefulWidget {
   const StudentLoginPage({super.key});
@@ -67,7 +69,7 @@ class _StudentLoginPageState extends State<StudentLoginPage>
 
     try {
       final response = await http.post(
-        Uri.parse("http://10.114.21.165:3000/students/check-student"),
+        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/check-student"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "regNo": studentId,
