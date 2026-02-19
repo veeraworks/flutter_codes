@@ -274,22 +274,47 @@ class _StudentHomePageState extends State<StudentHomePage> {
     _tempBusListener = FirebaseDatabase.instance
         .ref("temporaryBusChanges/$busId")
         .onValue
-        .listen((event) {
+        .listen((event) async {
 
       final data = event.snapshot.value as Map?;
 
       if (data != null && data["status"] == "ACTIVE") {
+
         final String? newBus = data["newBus"];
+        final String? tempRoute = data["tempRoute"];
+
+        // 🔥 SWITCH TOPIC
+        await FirebaseMessaging.instance
+            .unsubscribeFromTopic(busId.toLowerCase());
+
+        if (newBus != null) {
+          await FirebaseMessaging.instance
+              .subscribeToTopic(newBus.toLowerCase());
+        }
 
         setState(() {
           tempBus = newBus;
-          displayRoute = newBus ?? routeName;  // 🔥 UPDATE DISPLAY
+          displayRoute = tempRoute ?? routeName;
         });
 
       } else {
+
+        final originalBus = prefs.getString("busId");
+
+        // 🔥 RESTORE TOPIC
+        if (tempBus != null) {
+          await FirebaseMessaging.instance
+              .unsubscribeFromTopic(tempBus!.toLowerCase());
+        }
+
+        if (originalBus != null) {
+          await FirebaseMessaging.instance
+              .subscribeToTopic(originalBus.toLowerCase());
+        }
+
         setState(() {
           tempBus = null;
-          displayRoute = routeName;  // 🔥 RESTORE ORIGINAL
+          displayRoute = routeName;
         });
       }
     });
@@ -387,12 +412,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
       routeName = prefs.getString("routeName");
 
       // 🔥 LOAD DISPLAY ROUTE (temp if active, otherwise permanent)
-      bool isTempActive = prefs.getBool("isTempBusActive") ?? false;
-      if (isTempActive) {
-        displayRoute = prefs.getString("tempRoute") ?? routeName;
-      } else {
-        displayRoute = routeName;
-      }
+      displayRoute = routeName;
     });
   }
 
@@ -848,6 +868,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     setState(() {
       regNo = prefs.getString("regNo");
     });
+    print("REGNO FROM PREFS = $regNo");
   }
 
   Future<void> _markAllAsRead() async {
@@ -888,10 +909,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
   Widget build(BuildContext context) {
     if (regNo == null) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+        body: Center(child: Text("Session missing. Please login again.")),
       );
     }
-
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF00BFA6),
@@ -1231,4 +1251,3 @@ class HelpPage extends StatelessWidget {
     );
   }
 }
-
