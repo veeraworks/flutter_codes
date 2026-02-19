@@ -45,7 +45,7 @@
       }
       try {
         final response = await http.post(
-          Uri.parse("http://10.114.21.165:3000/check-student"),
+          Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/check-student"),
           headers: {"Content-Type": "application/json"},
           body: jsonEncode({
             "registerNumber": regController.text.trim(),
@@ -139,7 +139,7 @@
     Future<void> fetchStudentDetails(String registerNumber) async {
       try {
         final response = await http.post(
-          Uri.parse("http://10.114.21.165:3000/get-student-by-reg"),
+          Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/get-student-by-reg"),
           headers: {"Content-Type": "application/json"},
           body: jsonEncode({
             "registerNumber": registerNumber,
@@ -188,7 +188,7 @@
 
         // 🔥 CALL BACKEND COMPLETE SIGNUP
         final response = await http.post(
-          Uri.parse("http://10.114.21.165:3000/students/complete-signup"),
+          Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/complete-signup"),
           headers: {"Content-Type": "application/json"},
           body: jsonEncode({
             "regNo": regController.text.trim(),

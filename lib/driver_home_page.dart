@@ -262,7 +262,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     }
 
     final response = await http.post(
-      Uri.parse("http://10.114.21.165:3000/drivers/start-trip"),
+      Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/start-trip"),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode({
         "busId": busId,
@@ -296,7 +296,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     if (busId == null || currentTripId == null) return;
 
     final response = await http.post(
-      Uri.parse("http://10.114.21.165:3000/drivers/end-trip"),
+      Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/end-trip"),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode({
         "busId": busId,
@@ -323,7 +323,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     if (phone == null) return;
 
     final response = await http.get(
-      Uri.parse("http://10.114.21.165:3000/drivers/profile?phone=$phone"),
+      Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/profile?phone=$phone"),
     );
 
     if (response.statusCode == 200) {
