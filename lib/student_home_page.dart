@@ -99,6 +99,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
       setState(() {
         studentName = data["name"];
         routeName = data["busName"];
+        displayRoute = data["busName"];
       });
 
       await prefs.setString("busId", data["busId"]);
