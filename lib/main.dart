@@ -4,6 +4,8 @@ import 'driver_login_page.dart';
 import 'driver_home_page.dart';
 import 'student_home_page.dart';
 
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -18,7 +20,26 @@ Future<void> _firebaseMessagingBackgroundHandler(
   await Firebase.initializeApp();
   print("🔔 Background message received");
 }
+Future<void> saveNotification(RemoteMessage message) async {
+  final user = FirebaseAuth.instance.currentUser;
 
+  if (user == null) {
+    print("⚠ No logged in user, notification not saved");
+    return;
+  }
+
+  await FirebaseDatabase.instance
+      .ref("notifications/${user.uid}")
+      .push()
+      .set({
+    "title": message.notification?.title ?? "",
+    "body": message.notification?.body ?? "",
+    "time": ServerValue.timestamp,
+    "read": false,
+  });
+
+  print("✅ Notification saved in database");
+}
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
@@ -40,8 +61,11 @@ Future<void> main() async {
   });
 
   /// 🔥 FOREGROUND LISTENER
-  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+  FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
     print("📩 Foreground notification received");
+
+    // ✅ SAVE TO FIREBASE
+    await saveNotification(message);
 
     if (message.notification != null &&
         navigatorKey.currentContext != null) {
@@ -56,11 +80,12 @@ Future<void> main() async {
       );
     }
   });
-
   /// 🔥 WHEN USER CLICKS NOTIFICATION
   FirebaseMessaging.onMessageOpenedApp.listen(
-          (RemoteMessage message) {
+          (RemoteMessage message) async {
         print("🔥 Notification clicked");
+
+        await saveNotification(message);
       });
 
   runApp(const MyApp());

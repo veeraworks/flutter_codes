@@ -97,16 +97,21 @@ class _DriverHomePageState extends State<DriverHomePage> {
     final prefs = await SharedPreferences.getInstance();
 
     setState(() {
+      // Permanent
       permBusNumber = prefs.getString("busNumber") ?? "-";
       permRouteName = prefs.getString("routeName") ?? "-";
       shift = prefs.getString("shift") ?? "-";
 
-      busNumber = permBusNumber;
-      routeName = permRouteName;
+      // Temporary
+      isTempBusActive = prefs.getBool("isTempBusActive") ?? false;
+      tempBusNumber = prefs.getString("tempBusNumber");
+      tempRouteName = prefs.getString("tempRouteName");
     });
 
-    print("Loaded from SharedPreferences → $permBusNumber | $permRouteName");
+    print("Permanent → $permBusNumber | $permRouteName");
+    print("Temporary Active → $isTempBusActive");
   }
+
 
   // ---------------- CHECK GPS / INTERNET ---------------------------------------
   Future<void> _checkStatuses() async {
@@ -376,7 +381,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
         // optional backend update
         if (busId != null) {
           FirebaseDatabase.instance
-              .ref("temporaryBus/$busId")
+              .ref("temporaryBusChanges/$busId")
               .update({
             "active": false,
             "updatedAt": ServerValue.timestamp,

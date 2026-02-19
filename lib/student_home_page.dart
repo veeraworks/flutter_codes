@@ -24,6 +24,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
   String? routeName;
   String? displayRoute;
   String? activeIssue;
+  String? tempBus;
   StreamSubscription<DatabaseEvent>? _issueListener;
   StreamSubscription<DatabaseEvent>? _tempBusListener;
   StreamSubscription<DatabaseEvent>? _busListener;
@@ -33,6 +34,9 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
   int _currentIndex = 0;
   double? _etaMinutes;
+
+  int unreadCount = 0;
+  StreamSubscription? _notificationListener;
 
   String? _prevTempRoute; // track previous temp route to avoid duplicate snackbars
 
@@ -45,6 +49,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
     _loadStudentInfo();
     _subscribeToRoute();
     _saveFcmToken();
+    _listenToNotifications();
     _listenToBusIssues();
     _listenToBus();
     _listenToTemporaryBus();
@@ -62,6 +67,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
         "title": message.notification?.title ?? "Notification",
         "body": message.notification?.body ?? "",
         "timestamp": ServerValue.timestamp,
+        "read": false,
       });
     });
   }
@@ -71,6 +77,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
     _issueListener?.cancel();
     _busListener?.cancel();
     _tempBusListener?.cancel();
+    _notificationListener?.cancel();
     super.dispose();
   }
 
@@ -96,6 +103,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
       await prefs.setString("busId", data["busId"]);
       await prefs.setString("routeName", data["busName"]);
+      await prefs.setString("studentName", data["name"]); // ✅ correct
 
       // 🔥 If bus changed → update topic
       if (oldBusId != data["busId"]) {
@@ -154,7 +162,9 @@ class _StudentHomePageState extends State<StudentHomePage> {
         "title": title,
         "body": body,
         "timestamp": ServerValue.timestamp,
+        "read": false,
       });
+
 
       // Snackbar (foreground only)
       if (mounted) {
@@ -178,6 +188,41 @@ class _StudentHomePageState extends State<StudentHomePage> {
           .ref("routeTokens/$routeName/$token")
           .set(true);
     }
+  }
+  Future<void> _listenToNotifications() async {
+    final prefs = await SharedPreferences.getInstance();
+    final regNo = prefs.getString("regNo");  // ✅ FIXED
+
+    if (regNo == null) return;
+
+    _notificationListener = FirebaseDatabase.instance
+        .ref("notifications/$regNo")   // ✅ FIXED
+        .onValue
+        .listen((event) {
+
+      final data = event.snapshot.value;
+
+      if (data == null) {
+        setState(() => unreadCount = 0);
+        return;
+      }
+
+      final Map<String, dynamic> map =
+      Map<String, dynamic>.from(data as Map);
+
+      int count = 0;
+
+      map.forEach((key, value) {
+        final notif = Map<String, dynamic>.from(value);
+        if (notif["read"] == false) {
+          count++;
+        }
+      });
+
+      setState(() {
+        unreadCount = count;
+      });
+    });
   }
 
 // ✅ LOGOUT FUNCTION
@@ -226,46 +271,25 @@ class _StudentHomePageState extends State<StudentHomePage> {
     if (busId == null) return;
 
     _tempBusListener = FirebaseDatabase.instance
-        .ref("temporaryBus/$busId")
+        .ref("temporaryBusChanges/$busId")
         .onValue
         .listen((event) {
 
-      final data = event.snapshot.value;
+      final data = event.snapshot.value as Map?;
 
-      if (data == null) {
-        return;
-      }
-
-      final map = Map<String, dynamic>.from(data as Map);
-
-      if (map["active"] == true) {
-        final String? temp = map["tempRoute"] as String?;
+      if (data != null && data["status"] == "ACTIVE") {
+        final String? newBus = data["newBus"];
 
         setState(() {
-          displayRoute = temp ?? routeName;
+          tempBus = newBus;
+          displayRoute = newBus ?? routeName;  // 🔥 UPDATE DISPLAY
         });
 
-        if (temp != null && temp != _prevTempRoute) {
-          _prevTempRoute = temp;
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text("Temporary route active: $temp")),
-            );
-          }
-        }
-      }
-      else {
+      } else {
         setState(() {
-          displayRoute = routeName;
+          tempBus = null;
+          displayRoute = routeName;  // 🔥 RESTORE ORIGINAL
         });
-        if (_prevTempRoute != null) {
-          _prevTempRoute = null;
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("Temporary route cleared")),
-            );
-          }
-        }
       }
     });
   }
@@ -358,7 +382,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
     final prefs = await SharedPreferences.getInstance();
 
     setState(() {
-      studentName = prefs.getString("studentId");
+      studentName = prefs.getString("studentName") ?? "-";
       routeName = prefs.getString("routeName");
 
       // 🔥 LOAD DISPLAY ROUTE (temp if active, otherwise permanent)
@@ -443,7 +467,20 @@ class _StudentHomePageState extends State<StudentHomePage> {
       body: SingleChildScrollView(
         child: Column(
           children: [
-            // HEADER
+            if (tempBus != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                color: Colors.orange,
+                child: Text(
+                  "Temporary Bus Active: $tempBus",
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(20, 40, 20, 28),
@@ -729,12 +766,45 @@ class _StudentHomePageState extends State<StudentHomePage> {
             setState(() => _currentIndex = index);
           }
         },
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
+        items: [
+          const BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
+          // 🔴 NOTIFICATION WITH BADGE
           BottomNavigationBarItem(
-              icon: Icon(Icons.notifications), label: 'Notifications'),
-          BottomNavigationBarItem(icon: Icon(Icons.help), label: 'Help'),
-          BottomNavigationBarItem(icon: Icon(Icons.info), label: 'About'),
+            icon: Stack(
+              children: [
+                const Icon(Icons.notifications),
+
+                if (unreadCount > 0)
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      constraints: const BoxConstraints(
+                        minWidth: 16,
+                        minHeight: 16,
+                      ),
+                      child: Text(
+                        unreadCount.toString(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            label: 'Notifications',
+          ),
+          const BottomNavigationBarItem(icon: Icon(Icons.help), label: 'Help'),
+          const BottomNavigationBarItem(icon: Icon(Icons.info), label: 'About'),
         ],
       ),
     );
@@ -764,7 +834,12 @@ class _NotificationsPageState extends State<NotificationsPage> {
   @override
   void initState() {
     super.initState();
-    _loadRegNo();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    await _loadRegNo();
+    await _markAllAsRead();
   }
 
   Future<void> _loadRegNo() async {
@@ -772,6 +847,27 @@ class _NotificationsPageState extends State<NotificationsPage> {
     setState(() {
       regNo = prefs.getString("regNo");
     });
+  }
+
+  Future<void> _markAllAsRead() async {
+    final prefs = await SharedPreferences.getInstance();
+    final regNo = prefs.getString("regNo");
+
+    if (regNo == null) return;
+
+    final snapshot = await FirebaseDatabase.instance
+        .ref("notifications/$regNo")
+        .get();
+
+    if (!snapshot.exists) return;
+
+    final data = Map<String, dynamic>.from(snapshot.value as Map);
+
+    for (var key in data.keys) {
+      await FirebaseDatabase.instance
+          .ref("notifications/$regNo/$key")
+          .update({"read": true});
+    }
   }
 
   String formatTime(int timestamp) {
@@ -789,7 +885,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
   @override
   Widget build(BuildContext context) {
-
     if (regNo == null) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
@@ -799,8 +894,10 @@ class _NotificationsPageState extends State<NotificationsPage> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF00BFA6),
-        title: const Text("Notifications",
-            style: TextStyle(color: Colors.white)),
+        title: const Text(
+          "Notifications",
+          style: TextStyle(color: Colors.white),
+        ),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: StreamBuilder(
@@ -809,33 +906,67 @@ class _NotificationsPageState extends State<NotificationsPage> {
             .orderByChild("timestamp")
             .onValue,
         builder: (context, snapshot) {
-
           if (!snapshot.hasData || snapshot.data!.snapshot.value == null) {
-            return const Center(
-              child: Text("No notifications yet"),
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: const [
+                  Icon(Icons.notifications_off,
+                      size: 60, color: Colors.grey),
+                  SizedBox(height: 12),
+                  Text(
+                    "No notifications yet",
+                    style: TextStyle(fontSize: 16, color: Colors.grey),
+                  ),
+                ],
+              ),
             );
           }
 
           final data = Map<String, dynamic>.from(
               snapshot.data!.snapshot.value as Map);
 
-          final notifications = data.values.toList()
+          // 🔥 SORT KEYS BY TIMESTAMP DESC
+          final keys = data.keys.toList()
             ..sort((a, b) =>
-                b["timestamp"].compareTo(a["timestamp"]));
+                data[b]["timestamp"].compareTo(data[a]["timestamp"]));
 
           return ListView.builder(
             padding: const EdgeInsets.all(16),
-            itemCount: notifications.length,
+            itemCount: keys.length,
             itemBuilder: (context, index) {
+              final notificationId = keys[index];
+              final item = data[notificationId];
 
-              final item = notifications[index];
-
-              return NotificationCard(
-                title: item["title"],
-                message: item["body"],
-                time: formatTime(item["timestamp"]),
-                icon: Icons.notifications,
-                color: Colors.blue,
+              return Dismissible(
+                key: Key(notificationId),
+                direction: DismissDirection.endToStart,
+                background: Container(
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(right: 20),
+                  color: Colors.red,
+                  child: const Icon(Icons.delete, color: Colors.white),
+                ),
+                onDismissed: (_) async {
+                  await FirebaseDatabase.instance
+                      .ref("notifications/$regNo/$notificationId")
+                      .remove();
+                },
+                child: GestureDetector(
+                  onTap: () {
+                    FirebaseDatabase.instance
+                        .ref("notifications/$regNo/$notificationId/read")
+                        .set(true);
+                  },
+                  child: NotificationCard(
+                    title: item["title"] ?? "",
+                    message: item["body"] ?? "",
+                    time: formatTime(item["timestamp"]),
+                    icon: Icons.notifications,
+                    color: Colors.blue,
+                    isRead: item["read"] == true,
+                  ),
+                ),
               );
             },
           );
@@ -844,12 +975,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
     );
   }
 }
-class NotificationCard extends StatelessWidget {
+    class NotificationCard extends StatelessWidget {
   final String title;
   final String message;
   final String time;
   final IconData icon;
   final Color color;
+  final bool isRead;
 
   const NotificationCard({
     super.key,
@@ -858,6 +990,7 @@ class NotificationCard extends StatelessWidget {
     required this.time,
     required this.icon,
     required this.color,
+    required this.isRead,
   });
 
   @override
@@ -875,7 +1008,7 @@ class NotificationCard extends StatelessWidget {
           ),
         ],
       ),
-      child: Row(
+      child:Row(
         children: [
           Container(
             width: 42,
@@ -887,29 +1020,62 @@ class NotificationCard extends StatelessWidget {
             child: Icon(icon, color: color),
           ),
           const SizedBox(width: 12),
+
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title,
-                    style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600)),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight:
+                          isRead ? FontWeight.w500 : FontWeight.w700,
+                          color: Colors.black,
+                        ),
+                      ),
+                    ),
+
+                    if (!isRead)
+                      Container(
+                        width: 8,
+                        height: 8,
+                        margin: const EdgeInsets.only(left: 6),
+                        decoration: const BoxDecoration(
+                          color: Colors.blue,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                  ],
+                ),
+
                 const SizedBox(height: 4),
-                Text(message,
-                    style: const TextStyle(
-                        fontSize: 14,
-                        color: Colors.black87)),
+
+                Text(
+                  message,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Colors.black87,
+                  ),
+                ),
+
                 const SizedBox(height: 6),
-                Text(time,
-                    style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.black54)),
+
+                Text(
+                  time,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.black54,
+                  ),
+                ),
               ],
             ),
           ),
         ],
-      ),
+      )
     );
   }
 }
