@@ -134,9 +134,9 @@ class _WelcomePageState extends State<WelcomePage> {
   Future<void> _checkAutoLogin() async {
     SharedPreferences prefs =
     await SharedPreferences.getInstance();
+    bool isLoggedIn = prefs.getBool("isLoggedIn") ?? false;
+    String role = prefs.getString("role") ?? "";
 
-    bool? isLoggedIn = prefs.getBool("isLoggedIn");
-    String? role = prefs.getString("role");
 
     if (isLoggedIn == true && role != null) {
 

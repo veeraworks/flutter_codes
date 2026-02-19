@@ -45,6 +45,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
   String? busId;
   String? currentTripId;
   StreamSubscription<Position>? positionStream;
+  StreamSubscription? _tempBusListener;
 
   // 🗺️ MAP STATE
   GoogleMapController? _mapController;
@@ -73,6 +74,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     await _loadBusId();
     await _loadBusInfo();
     await _checkStatuses();
+    await _listenToTemporaryBus();
 
     setState(() {
       _initialized = true;
@@ -82,6 +84,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
   @override
   void dispose() {
     positionStream?.cancel();
+    _tempBusListener?.cancel();
     super.dispose();
   }
 
@@ -111,7 +114,39 @@ class _DriverHomePageState extends State<DriverHomePage> {
     print("Permanent → $permBusNumber | $permRouteName");
     print("Temporary Active → $isTempBusActive");
   }
+//===================== LISTEN TO TEMPORARY BUS CHANGES ==========================
+  Future<void> _listenToTemporaryBus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final busId = prefs.getString("busId");
 
+    if (busId == null) return;
+
+    _tempBusListener = FirebaseDatabase.instance
+        .ref("temporaryBusChanges/$busId")
+        .onValue
+        .listen((event) {
+
+      final data = event.snapshot.value as Map?;
+
+      if (data != null && data["status"] == "ACTIVE") {
+
+        setState(() {
+          isTempBusActive = true;
+          tempBusNumber = data["newBus"];
+          tempRouteName = data["tempRoute"];
+        });
+
+      } else {
+
+        setState(() {
+          isTempBusActive = false;
+          tempBusNumber = null;
+          tempRouteName = null;
+        });
+
+      }
+    });
+  }
 
   // ---------------- CHECK GPS / INTERNET ---------------------------------------
   Future<void> _checkStatuses() async {
@@ -428,7 +463,9 @@ class _DriverHomePageState extends State<DriverHomePage> {
                       style: TextStyle(color: Colors.white, fontSize: 22),
                     ),
                     Text(
-                      tripStarted ? 'ON DUTY' : 'OFF DUTY',
+                      tripStarted
+                          ? (isTempBusActive ? 'TEMP DUTY' : 'ON DUTY')
+                          : 'OFF DUTY',
                       style: const TextStyle(color: Colors.white70),
                     ),
                   ],
@@ -443,27 +480,49 @@ class _DriverHomePageState extends State<DriverHomePage> {
             title: 'Bus Information',
             children: [
               // show permanent values as before
-              _infoRow('Route', permRouteName),
-              _infoRow('Bus Number', permBusNumber),
+              _infoRow(
+                'Route',
+                isTempBusActive ? "$permRouteName (Original)" : permRouteName,
+              ),
+
+              _infoRow(
+                'Bus Number',
+                isTempBusActive ? "$permBusNumber (Original)" : permBusNumber,
+              ),
               _infoRow('Shift', shift),
 
               // show temporary details only under this card (do not replace permanent display)
-              if (isTempBusActive) ...[
-                const Divider(height: 18),
-                const Text(
-                  "Temporary Bus Changes",
-                  style: TextStyle(
-                    color: Colors.orange,
-                    fontWeight: FontWeight.bold,
+              if (isTempBusActive)
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.orange),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded,
+                          color: Colors.orange),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          "Temporary Bus Active\n"
+                              "Bus: ${tempBusNumber ?? "-"}\n"
+                              "Route: ${tempRouteName ?? "-"}",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black87,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 6),
-                _infoRow('Temp Route', tempRouteName ?? "-"),
-                _infoRow('Temp Bus Number', tempBusNumber ?? "-"),
-              ],
             ],
           ),
-
           const SizedBox(height: 16),
 
           _infoCard(
