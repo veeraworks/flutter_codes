@@ -231,13 +231,14 @@ class _DriverHomePageState extends State<DriverHomePage> {
       headers: {"Content-Type": "application/json"},
       body: jsonEncode({
         "busId": busId,
+        "mode": mode,   // 🔥🔥🔥 THIS LINE WAS MISSING
       }),
     );
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
 
-      currentTripId = data["tripId"]; // 🔥 STORE TRIP ID
+      currentTripId = data["tripId"];
 
       setState(() {
         tripStarted = true;
@@ -280,122 +281,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
     );
   }
 
-  // ---------------- START / END TRIP --------------------------------------
-  Future<void> _toggleTrip() async {
-    await _checkStatuses();
-
-    // 🔍 DEBUG LINE — PASTE EXACTLY HERE
-    print("busId: $busId, gpsOn: $gpsOn, internetOn: $internetOn");
-
-    // Do NOT return early when busId is null — allow local start/end
-    if (!tripStarted) {
-      if (!gpsOn) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Please enable GPS")),
-        );
-        await Geolocator.openLocationSettings();
-        return;
-      }
-
-      if (!internetOn) {
-        // allow starting locally but warn the user
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Internet is off — tracking will run locally")),
-        );
-      }
-
-      // Immediately update UI so button changes to "End Trip" and map appears
-      setState(() {
-        tripStarted = true;
-        _routePoints.clear();
-        _polylines.clear();
-        _startMarker = Marker(
-          markerId: const MarkerId("start"),
-          position: _currentLatLng,
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueGreen,
-          ),
-        );
-      });
-
-      SharedPreferences.getInstance().then((prefs) {
-        prefs.setBool("trackingActive", true);
-      });
-
-      // Start location updates without blocking the UI (don't await)
-      _startLocationUpdates();
-
-      // Update Firebase status non-blocking (only if busId present)
-      if (busId != null) {
-        FirebaseDatabase.instance
-            .ref("busTrips/$busId/status")
-            .set("STARTED")
-            .catchError((e) {
-          print("Failed to set STARTED status: $e");
-        });
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Bus ID not found — running in local mode")),
-        );
-      }
-    } else {
-      // End trip: cancel stream and update U I immediately
-      await positionStream?.cancel();
-      positionStream = null;
-      if (_routePoints.isNotEmpty) {
-        _endMarker = Marker(
-          markerId: const MarkerId("end"),
-          position: _routePoints.last,
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueRed,
-          ),
-        );
-      }
-
-      setState(() {
-        tripStarted = false;
-        _routePoints.clear();
-        _polylines.clear();
-      });
-
-      SharedPreferences.getInstance().then((prefs) {
-        prefs.setBool("trackingActive", false);
-      });
-
-      // Update Firebase status non-blocking if busId present
-      if (busId != null) {
-        FirebaseDatabase.instance
-            .ref("busTrips/$busId/status")
-            .set("ENDED")
-            .catchError((e) {
-          print("Failed to set ENDED status: $e");
-        });
-      }
-      // 🔥 AUTO CLEAR TEMP BUS ON END TRIP
-      final prefs = await SharedPreferences.getInstance();
-      final bool isTempActive = prefs.getBool("isTempBusActive") ?? false;
-
-      if (isTempActive) {
-        await prefs.setBool("isTempBusActive", false);
-
-        // optional backend update
-        if (busId != null) {
-          FirebaseDatabase.instance
-              .ref("temporaryBusChanges/$busId")
-              .update({
-            "active": false,
-            "updatedAt": ServerValue.timestamp,
-          });
-        }
-
-        // reload home page bus info
-        await _loadBusInfo();
-      }
-
-    }
-
-    await _checkStatuses();
-  }
   Future<void> _refreshDriverProfile() async {
     final prefs = await SharedPreferences.getInstance();
     final phone = prefs.getString("phone");

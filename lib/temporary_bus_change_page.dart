@@ -93,9 +93,9 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
       await FirebaseDatabase.instance
           .ref("temporaryBusChanges/$busId")
           .set({
-        "active": true,
-        "replacedBy": newBus,
+        "newBus": newBus,
         "tempRoute": selectedRoute,
+        "status": "ACTIVE",
         "updatedAt": ServerValue.timestamp,
       });
 
@@ -105,8 +105,8 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "busId": busId,
-          "tempBusNumber": newBus,
-          "active": true,
+          "newBus": newBus,
+          "status": "ACTIVE",
         }),
       );
 
@@ -161,7 +161,9 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
       await FirebaseDatabase.instance
           .ref("temporaryBusChanges/$busId")
           .update({
-        "active": false,
+        "newBus": null,
+        "tempRoute": null,
+        "status": "CLEARED",
         "updatedAt": ServerValue.timestamp,
       });
 
@@ -170,9 +172,9 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
         Uri.parse("http://10.114.21.165:3000/temporary-bus"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
-          "busId": busId,
-          "active": false,
-        }),
+      "busId": busId,
+      "status": "CLEARED",
+       }),
       );
 
       setState(() {
