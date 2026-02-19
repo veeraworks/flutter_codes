@@ -85,14 +85,13 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
 
     try {
       // ✅ UPDATE LOCAL STORAGE
-      await prefs.setString("busNumber", newBus);
       await prefs.setString("tempBusNumber", newBus);
-      await prefs.setString("routeName", selectedRoute);
+      await prefs.setString("tempRouteName", selectedRoute);
       await prefs.setBool("isTempBusActive", true);
 
       // ✅ UPDATE FIREBASE REALTIME DB
       await FirebaseDatabase.instance
-          .ref("temporaryBus/$busId")
+          .ref("temporaryBusChanges/$busId")
           .set({
         "active": true,
         "replacedBy": newBus,
@@ -156,15 +155,11 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
       // ✅ RESET LOCAL STORAGE
       await prefs.setBool("isTempBusActive", false);
       await prefs.remove("tempBusNumber");
-      await prefs.setString("busNumber", originalBus);
-
-      if (originalRoute != null) {
-        await prefs.setString("routeName", originalRoute);
-      }
+      await prefs.remove("tempRouteName");
 
       // ✅ UPDATE FIREBASE
       await FirebaseDatabase.instance
-          .ref("temporaryBus/$busId")
+          .ref("temporaryBusChanges/$busId")
           .update({
         "active": false,
         "updatedAt": ServerValue.timestamp,

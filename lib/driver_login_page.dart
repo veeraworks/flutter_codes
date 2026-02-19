@@ -1,11 +1,8 @@
-import 'dart:convert';
-import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
-
 import 'driver_signup_page.dart';
 import 'driver_otp_page.dart';
+import 'driver_home_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class DriverLoginPage extends StatefulWidget {
   const DriverLoginPage({super.key});
@@ -16,7 +13,6 @@ class DriverLoginPage extends StatefulWidget {
 
 class _DriverLoginPageState extends State<DriverLoginPage>
     with SingleTickerProviderStateMixin {
-
   final TextEditingController driverNameController = TextEditingController();
   final TextEditingController phoneController = TextEditingController();
 
@@ -28,6 +24,50 @@ class _DriverLoginPageState extends State<DriverLoginPage>
   @override
   void initState() {
     super.initState();
+    Future<void> driverLogin() async {
+
+      final name = driverNameController.text.trim();
+      final phone = phoneController.text.trim();
+
+      if (name.isEmpty || phone.isEmpty) {
+        setState(() => showError = true);
+        shakeController.forward(from: 0);
+        return;
+      }
+
+      setState(() {
+        showError = false;
+        isLoading = true;
+      });
+
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      setState(() => isLoading = false);
+
+      // 🔐 Manual Login Condition
+      if (name == "driver" && phone == "123") {
+
+        SharedPreferences prefs = await SharedPreferences.getInstance();
+
+        await prefs.setBool("isLoggedIn", true);
+        await prefs.setString("role", "driver");
+        await prefs.setString("busId", "BUS10");
+        await prefs.setString("busNumber", "BUS10");
+        await prefs.setString("routeName", "Ashok Pillar");
+        await prefs.setString("originalBusNumber", "BUS10");
+        await prefs.setString("originalRoute", "Ashok Pillar");
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const DriverHomePage(),
+          ),
+        );
+
+      } else {
+        setState(() => showError = true);
+      }
+    }
 
     shakeController = AnimationController(
       vsync: this,
@@ -43,20 +83,13 @@ class _DriverLoginPageState extends State<DriverLoginPage>
     super.dispose();
   }
 
-  // ================= LOGIN =================
   Future<void> driverLogin() async {
     final name = driverNameController.text.trim();
     final phone = phoneController.text.trim();
 
     if (name.isEmpty || phone.isEmpty) {
       setState(() => showError = true);
-      return;
-    }
-
-    if (phone.length != 10) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Enter valid 10-digit phone number")),
-      );
+      shakeController.forward(from: 0);
       return;
     }
 
@@ -65,112 +98,63 @@ class _DriverLoginPageState extends State<DriverLoginPage>
       isLoading = true;
     });
 
-    try {
-      final response = await http.post(
-        Uri.parse("http://10.114.21.165:3000/drivers/check-driver"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"phone": phone}),
-      ).timeout(const Duration(seconds: 8));
+    await Future.delayed(const Duration(milliseconds: 500));
 
-      final data = jsonDecode(response.body);
+    setState(() => isLoading = false);
 
-      if (response.statusCode == 200 && data["driver"] != null) {
+    // 🔐 Hardcoded credentials
+    if (name == "driver" && phone == "123") {
 
-        final driver = data["driver"];
-        print("BACKEND DRIVER DATA: $driver");
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      await prefs.setBool("isLoggedIn", true);
+      await prefs.setString("role", "driver");
 
-        final prefs = await SharedPreferences.getInstance();
-
-        await prefs.setString("busId", driver["busId"] ?? "");
-        await prefs.setString("busNumber", driver["busNumber"] ?? "");
-        await prefs.setString("routeName", driver["routeName"] ?? "");
-        await prefs.setString("shift", driver["shift"] ?? "");
-
-        await prefs.setBool("isLoggedIn", true);
-        await prefs.setString("role", "driver");
-        await prefs.setBool("isTempBusActive", false);
-
-
-        if (!mounted) return;
-
-      Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => DriverOtpPage(
-              phoneNumber: phone,
-              driverName: data["driver"]["name"], // 👈 use backend name
-            ),
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Driver not found")),
-        );
-      }
-
-    } on TimeoutException {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Server timeout")),
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const DriverHomePage(),
+        ),
       );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Network error")),
-      );
-    } finally {
-      if (mounted) setState(() => isLoading = false);
+
+    } else {
+      setState(() => showError = true);
     }
   }
 
-  // ================= INPUT DECORATION =================
   InputDecoration inputDecoration({
     required String hint,
     required IconData icon,
   }) {
     return InputDecoration(
       hintText: hint,
+      hintStyle: const TextStyle(fontSize: 15),
       prefixIcon: Icon(icon, color: const Color(0xFF00C9A7)),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(18),
       ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: Color(0xFF00C9A7)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(
-          color: Color(0xFF00C9A7),
-          width: 2,
-        ),
-      ),
     );
   }
 
-  // ================= UI =================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
-
           Positioned.fill(
             child: Image.asset(
               'assets/images/maps6.png',
               fit: BoxFit.cover,
             ),
           ),
-
           Positioned.fill(
             child: Container(color: Colors.white.withOpacity(0.50)),
           ),
-
           Center(
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-
                   Container(
                     width: 110,
                     height: 110,
@@ -184,25 +168,15 @@ class _DriverLoginPageState extends State<DriverLoginPage>
                       color: Color(0xFF00C9A7),
                     ),
                   ),
-
                   const SizedBox(height: 30),
-
                   Container(
                     padding: const EdgeInsets.fromLTRB(22, 28, 22, 28),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(22),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.02),
-                          blurRadius: 18,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
                     ),
                     child: Column(
                       children: [
-
                         const Text(
                           "DRIVER LOGIN",
                           style: TextStyle(
@@ -211,9 +185,7 @@ class _DriverLoginPageState extends State<DriverLoginPage>
                             color: Color(0xFF00C9A7),
                           ),
                         ),
-
                         const SizedBox(height: 22),
-
                         TextField(
                           controller: driverNameController,
                           decoration: inputDecoration(
@@ -221,9 +193,7 @@ class _DriverLoginPageState extends State<DriverLoginPage>
                             icon: Icons.person,
                           ),
                         ),
-
                         const SizedBox(height: 18),
-
                         TextField(
                           controller: phoneController,
                           keyboardType: TextInputType.phone,
@@ -232,7 +202,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
                             icon: Icons.phone,
                           ),
                         ),
-
                         if (showError) ...[
                           const SizedBox(height: 12),
                           const Text(
@@ -240,13 +209,10 @@ class _DriverLoginPageState extends State<DriverLoginPage>
                             style: TextStyle(
                               color: Colors.red,
                               fontSize: 14,
-                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ],
-
                         const SizedBox(height: 26),
-
                         GestureDetector(
                           onTap: isLoading ? null : driverLogin,
                           child: Container(
@@ -272,22 +238,17 @@ class _DriverLoginPageState extends State<DriverLoginPage>
                                 color: Colors.white,
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
-                                letterSpacing: 1,
                               ),
                             ),
                           ),
                         ),
-
                         const SizedBox(height: 18),
-
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             const Text(
                               "New here? ",
-                              style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.black54),
+                              style: TextStyle(color: Colors.black54),
                             ),
                             GestureDetector(
                               onTap: () {
@@ -302,7 +263,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
                               child: const Text(
                                 "Create an account",
                                 style: TextStyle(
-                                  fontSize: 16,
                                   color: Color(0xFF00C9A7),
                                   fontWeight: FontWeight.bold,
                                 ),

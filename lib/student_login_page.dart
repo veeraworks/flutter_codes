@@ -49,7 +49,7 @@ class _StudentLoginPageState extends State<StudentLoginPage>
     super.dispose();
   }
 
-  // ✅ MANUAL LOGIN (Firebase NOT touched)
+// ✅ TEMPORARY MANUAL LOGIN (No Backend)
   Future<void> _login() async {
     String studentId = idController.text.trim();
     String mobileNumber = passwordController.text.trim();
@@ -65,44 +65,24 @@ class _StudentLoginPageState extends State<StudentLoginPage>
       return;
     }
 
-    try {
-      final response = await http.post(
-        Uri.parse("http://10.114.21.165:3000/students/check-student"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "regNo": studentId,
-          "phone": mobileNumber,
-        }),
+    // 🔐 Hardcoded credentials
+    if (studentId == "hi" && mobileNumber == "123") {
+
+      // Save login locally
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      await prefs.setBool("isLoggedIn", true);
+      await prefs.setString("role", "student");
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const StudentHomePage()),
       );
 
-      final data = jsonDecode(response.body);
-
-      if (response.statusCode == 200 && data["student"] != null) {
-
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => StudentOtpPage(
-              studentId: studentId,
-              phoneNumber: mobileNumber,
-            ),
-          ),
-        );
-
-      } else {
-        _shakeController.forward(from: 0);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Invalid Student ID or Mobile Number"),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-
-    } catch (e) {
+    } else {
+      _shakeController.forward(from: 0);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Server not reachable"),
+          content: Text("Invalid Student ID or Password"),
           backgroundColor: Colors.red,
         ),
       );
