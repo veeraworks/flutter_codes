@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'settings_page.dart';
@@ -37,7 +39,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
   @override
   void initState() {
     super.initState();
-
+    _refreshStudentProfile();
     _requestPermission();
     _listenForMessages();
     _loadStudentInfo();
@@ -46,6 +48,22 @@ class _StudentHomePageState extends State<StudentHomePage> {
     _listenToBusIssues();
     _listenToBus();
     _listenToTemporaryBus();
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) async {
+
+      final prefs = await SharedPreferences.getInstance();
+      final regNo = prefs.getString("regNo");
+
+      if (regNo == null) return;
+
+      await FirebaseDatabase.instance
+          .ref("notifications/$regNo")
+          .push()
+          .set({
+        "title": message.notification?.title ?? "Notification",
+        "body": message.notification?.body ?? "",
+        "timestamp": ServerValue.timestamp,
+      });
+    });
   }
 
   @override
@@ -56,26 +74,49 @@ class _StudentHomePageState extends State<StudentHomePage> {
     super.dispose();
   }
 
+  Future<void> _refreshStudentProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    final regNo = prefs.getString("regNo");
+
+    if (regNo == null) return;
+
+    final response = await http.get(
+      Uri.parse("http://10.114.21.165:3000/students/profile?regNo=$regNo"),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+
+      String oldBusId = prefs.getString("busId") ?? "";
+
+      setState(() {
+        studentName = data["name"];
+        routeName = data["busName"];
+      });
+
+      await prefs.setString("busId", data["busId"]);
+      await prefs.setString("routeName", data["busName"]);
+
+      // 🔥 If bus changed → update topic
+      if (oldBusId != data["busId"]) {
+        await FirebaseMessaging.instance
+            .unsubscribeFromTopic(oldBusId.toLowerCase());
+
+        await FirebaseMessaging.instance
+            .subscribeToTopic(data["busId"].toLowerCase());
+      }
+    }
+  }
   Future<void> _subscribeToRoute() async {
     final prefs = await SharedPreferences.getInstance();
-    final routeName = prefs.getString("routeName");
     final busId = prefs.getString("busId");
-
-    print("Saved busId: $busId");
-    print("Saved routeName: $routeName");
-
-    if (routeName != null && routeName.isNotEmpty) {
-      await FirebaseMessaging.instance
-          .subscribeToTopic(routeName.toLowerCase());
-      print("✅ Subscribed to route topic: ${routeName.toLowerCase()}");
-    }
 
     if (busId != null && busId.isNotEmpty) {
       await FirebaseMessaging.instance
           .subscribeToTopic(busId.toLowerCase());
+
       print("✅ Subscribed to bus topic: ${busId.toLowerCase()}");
     }
-
     String? token = await FirebaseMessaging.instance.getToken();
     print("FCM TOKEN: $token");
   }
@@ -93,23 +134,37 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
   void _listenForMessages() {
 
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
 
       print("🔔 Notification Received!");
-      print("Title: ${message.notification?.title}");
-      print("Body: ${message.notification?.body}");
 
-      if (mounted && message.notification != null) {
+      final prefs = await SharedPreferences.getInstance();
+      final regNo = prefs.getString("regNo");
+
+      if (regNo == null) return;
+
+      String title = message.notification?.title ?? "Notification";
+      String body = message.notification?.body ?? "";
+
+      // 🔥 SAVE TO FIREBASE
+      await FirebaseDatabase.instance
+          .ref("notifications/$regNo")
+          .push()
+          .set({
+        "title": title,
+        "body": body,
+        "timestamp": ServerValue.timestamp,
+      });
+
+      // Snackbar (foreground only)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              "${message.notification!.title}\n${message.notification!.body}",
-            ),
-          ),
+          SnackBar(content: Text("$title\n$body")),
         );
       }
     });
   }
+
   Future<void> _saveFcmToken() async {
     final prefs = await SharedPreferences.getInstance();
     final routeName = prefs.getString("routeName");
@@ -185,11 +240,11 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
       if (map["active"] == true) {
         final String? temp = map["tempRoute"] as String?;
+
         setState(() {
           displayRoute = temp ?? routeName;
         });
 
-        // show a short in-app notification if changed
         if (temp != null && temp != _prevTempRoute) {
           _prevTempRoute = temp;
           if (mounted) {
@@ -198,12 +253,11 @@ class _StudentHomePageState extends State<StudentHomePage> {
             );
           }
         }
-      } else {
+      }
+      else {
         setState(() {
           displayRoute = routeName;
         });
-
-        // notify cleared once
         if (_prevTempRoute != null) {
           _prevTempRoute = null;
           if (mounted) {
@@ -696,50 +750,100 @@ class _StudentHomePageState extends State<StudentHomePage> {
 }
 
 /* ================= NOTIFICATIONS PAGE ================= */
-
-class NotificationsPage extends StatelessWidget {
+class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
 
   @override
+  State<NotificationsPage> createState() => _NotificationsPageState();
+}
+
+class _NotificationsPageState extends State<NotificationsPage> {
+
+  String? regNo;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRegNo();
+  }
+
+  Future<void> _loadRegNo() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      regNo = prefs.getString("regNo");
+    });
+  }
+
+  String formatTime(int timestamp) {
+    final now = DateTime.now();
+    final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
+    final difference = now.difference(date);
+
+    if (difference.inMinutes < 1) return "Just now";
+    if (difference.inMinutes < 60)
+      return "${difference.inMinutes} mins ago";
+    if (difference.inHours < 24)
+      return "${difference.inHours} hrs ago";
+    return "${difference.inDays} days ago";
+  }
+
+  @override
   Widget build(BuildContext context) {
+
+    if (regNo == null) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F3F7),
       appBar: AppBar(
         backgroundColor: const Color(0xFF00BFA6),
-        title: const Text('Notifications',
+        title: const Text("Notifications",
             style: TextStyle(color: Colors.white)),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          NotificationCard(
-            title: 'Bus Arriving',
-            message: 'Your bus will arrive in 5 minutes.',
-            time: '1 min ago',
-            icon: Icons.directions_bus,
-            color: Colors.amber,
-          ),
-          NotificationCard(
-            title: 'Bus Delayed',
-            message: 'Bus delayed due to traffic.',
-            time: '10 mins ago',
-            icon: Icons.warning_amber,
-            color: Colors.orange,
-          ),
-          NotificationCard(
-            title: 'Bus Not Arriving',
-            message: 'Bus service is not available today.',
-            time: 'Today',
-            icon: Icons.cancel,
-            color: Colors.red,
-          ),
-        ],
+      body: StreamBuilder(
+        stream: FirebaseDatabase.instance
+            .ref("notifications/$regNo")
+            .orderByChild("timestamp")
+            .onValue,
+        builder: (context, snapshot) {
+
+          if (!snapshot.hasData || snapshot.data!.snapshot.value == null) {
+            return const Center(
+              child: Text("No notifications yet"),
+            );
+          }
+
+          final data = Map<String, dynamic>.from(
+              snapshot.data!.snapshot.value as Map);
+
+          final notifications = data.values.toList()
+            ..sort((a, b) =>
+                b["timestamp"].compareTo(a["timestamp"]));
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: notifications.length,
+            itemBuilder: (context, index) {
+
+              final item = notifications[index];
+
+              return NotificationCard(
+                title: item["title"],
+                message: item["body"],
+                time: formatTime(item["timestamp"]),
+                icon: Icons.notifications,
+                color: Colors.blue,
+              );
+            },
+          );
+        },
       ),
     );
   }
 }
-
 class NotificationCard extends StatelessWidget {
   final String title;
   final String message;

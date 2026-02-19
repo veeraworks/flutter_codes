@@ -82,9 +82,9 @@ class _DriverLoginPageState extends State<DriverLoginPage>
         final prefs = await SharedPreferences.getInstance();
 
         await prefs.setString("busId", driver["busId"] ?? "");
-        await prefs.setString("busNumber", driver["busName"] ?? "");
+        await prefs.setString("busNumber", driver["busNumber"] ?? "");
         await prefs.setString("routeName", driver["routeName"] ?? "");
-        await prefs.setString("shift", driver["shift"] ?? "Morning");
+        await prefs.setString("shift", driver["shift"] ?? "");
 
         await prefs.setBool("isLoggedIn", true);
         await prefs.setString("role", "driver");
