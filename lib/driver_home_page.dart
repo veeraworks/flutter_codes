@@ -24,6 +24,7 @@ class DriverHomePage extends StatefulWidget {
 
 class _DriverHomePageState extends State<DriverHomePage> {
   bool tripStarted = false;
+  String? tripMode;
   bool _initialized = false;
   // 🔑 BUS INFO STATE (ADDED)
   String busNumber = "-";
@@ -41,8 +42,9 @@ class _DriverHomePageState extends State<DriverHomePage> {
   bool gpsOn = false;
   bool internetOn = false;
   bool locationSyncOn = false;
-
+  bool tripEnding = false;
   String? busId;
+  String? permBusId;
   String? currentTripId;
   StreamSubscription<Position>? positionStream;
   StreamSubscription? _tempBusListener;
@@ -69,9 +71,20 @@ class _DriverHomePageState extends State<DriverHomePage> {
   Future<void> _initialize() async {
     final prefs = await SharedPreferences.getInstance();
 
-    await prefs.setBool("trackingActive", false);
 
     await _loadBusId();
+    final wasTracking = prefs.getBool("trackingActive") ?? false;
+    final savedTripId = prefs.getString("activeTripId");
+
+    if (wasTracking && savedTripId != null) {
+      setState(() {
+        tripStarted = true;
+        currentTripId = savedTripId;
+        tripMode = prefs.getString("tripMode");
+      });
+
+      _startLocationUpdates();
+    }
     await _loadBusInfo();
     await _checkStatuses();
     await _listenToTemporaryBus();
@@ -91,8 +104,10 @@ class _DriverHomePageState extends State<DriverHomePage> {
   // ================= LOAD BUS ID ====================================
   Future<void> _loadBusId() async {
     final prefs = await SharedPreferences.getInstance();
+
     setState(() {
-      busId = prefs.getString("busId");
+      permBusId = prefs.getString("busId");
+      busId = permBusId;
     });
   }
 // ================= LOAD BUS INFO (ADDED) =================
@@ -117,12 +132,11 @@ class _DriverHomePageState extends State<DriverHomePage> {
 //===================== LISTEN TO TEMPORARY BUS CHANGES ==========================
   Future<void> _listenToTemporaryBus() async {
     final prefs = await SharedPreferences.getInstance();
-    final busId = prefs.getString("busId");
-
-    if (busId == null) return;
+    final permId = prefs.getString("busId");
+    if (permId == null) return;
 
     _tempBusListener = FirebaseDatabase.instance
-        .ref("temporaryBusChanges/$busId")
+        .ref("temporaryBusChanges/$permId")
         .onValue
         .listen((event) {
 
@@ -134,6 +148,9 @@ class _DriverHomePageState extends State<DriverHomePage> {
           isTempBusActive = true;
           tempBusNumber = data["newBus"];
           tempRouteName = data["tempRoute"];
+
+          // ✅ VERY IMPORTANT
+          busId = data["newBus"];
         });
 
       } else {
@@ -142,8 +159,9 @@ class _DriverHomePageState extends State<DriverHomePage> {
           isTempBusActive = false;
           tempBusNumber = null;
           tempRouteName = null;
-        });
 
+          busId = permBusId;
+        });
       }
     });
   }
@@ -162,8 +180,18 @@ class _DriverHomePageState extends State<DriverHomePage> {
       internetOn = netEnabled;
       locationSyncOn = tripStarted && gpsOn && internetOn;
     });
-  }
 
+    // AUTO STOP TRIP IF GPS TURNED OFF
+    if (tripStarted && !gpsOn && !tripEnding) {
+      tripEnding = true;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("GPS turned OFF! Trip stopped")),
+      );
+
+      _endTripFromBackend();
+    }
+  }
   // ================= START GPS TRACKING ==================================
   Future<void> _startLocationUpdates() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -189,7 +217,8 @@ class _DriverHomePageState extends State<DriverHomePage> {
         accuracy: LocationAccuracy.high,
         distanceFilter: 5,
       ),
-    ).listen((position) {print("GPS UPDATE → ${position.latitude}, ${position.longitude}");
+    ).listen((position) {
+      print("GPS UPDATE → ${position.latitude}, ${position.longitude}");
 
     if (!tripStarted) {
       print("GPS running but trip not started");
@@ -239,14 +268,14 @@ class _DriverHomePageState extends State<DriverHomePage> {
       );
 
       // Update Firebase only if busId exists (non-blocking)
-      if (busId != null) {
+      // Update Firebase only if busId exists AND internet is ON
+      if (busId != null && internetOn) {
         FirebaseDatabase.instance.ref("buses/$busId").update({
           "lat": position.latitude,
           "lng": position.longitude,
           "bearing": position.heading,
           "updatedAt": ServerValue.timestamp,
         }).catchError((e) {
-          // optional: log error but don't block UI
           print("Failed to update bus location: $e");
         });
       }
@@ -254,9 +283,18 @@ class _DriverHomePageState extends State<DriverHomePage> {
   }
   //==================== START TRIP WITH MODE (NEW) =================
   Future<void> _startTripWithMode(String mode) async {
+
     if (busId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Bus ID not found")),
+      );
+      return;
+    }
+    await _checkStatuses();
+
+    if (!gpsOn || !internetOn) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Enable GPS & Internet first")),
       );
       return;
     }
@@ -266,7 +304,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
       headers: {"Content-Type": "application/json"},
       body: jsonEncode({
         "busId": busId,
-        "mode": mode,   // 🔥🔥🔥 THIS LINE WAS MISSING
+        "mode": mode,
       }),
     );
 
@@ -277,7 +315,14 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
       setState(() {
         tripStarted = true;
+        tripMode = mode;
       });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool("trackingActive", true);
+      await prefs.setString("activeTripId", currentTripId!);
+      await prefs.setString("tripMode", mode);
+
+      await _checkStatuses();
 
       _startLocationUpdates();
 
@@ -295,8 +340,16 @@ class _DriverHomePageState extends State<DriverHomePage> {
   Future<void> _endTripFromBackend() async {
     if (busId == null || currentTripId == null) return;
 
+    final prefs = await SharedPreferences.getInstance();
+
+    // 🔥 CLEAR LOCAL TRIP DATA
+    await prefs.setBool("trackingActive", false);
+    await prefs.remove("activeTripId");
+    await prefs.remove("tripMode");
+
     final response = await http.post(
-      Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/end-trip"),
+      Uri.parse(
+          "https://null-sheldon-unstudded.ngrok-free.dev/drivers/end-trip"),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode({
         "busId": busId,
@@ -309,6 +362,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     setState(() {
       tripStarted = false;
       currentTripId = null;
+      tripEnding = false;
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -464,7 +518,9 @@ class _DriverHomePageState extends State<DriverHomePage> {
                     ),
                     Text(
                       tripStarted
-                          ? (isTempBusActive ? 'TEMP DUTY' : 'ON DUTY')
+                          ? (isTempBusActive
+                          ? 'TEMP ${tripMode ?? ""} DUTY'
+                          : '${tripMode ?? ""} DUTY')
                           : 'OFF DUTY',
                       style: const TextStyle(color: Colors.white70),
                     ),
