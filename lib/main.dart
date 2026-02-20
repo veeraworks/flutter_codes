@@ -3,11 +3,11 @@ import 'package:project_spt/student_login_page.dart';
 import 'driver_login_page.dart';
 import 'driver_home_page.dart';
 import 'student_home_page.dart';
-
-
+import 'background_location_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -17,8 +17,58 @@ GlobalKey<NavigatorState>();
 /// 🔥 BACKGROUND HANDLER (MUST BE TOP LEVEL)
 Future<void> _firebaseMessagingBackgroundHandler(
     RemoteMessage message) async {
+
   await Firebase.initializeApp();
-  print("🔔 Background message received");
+
+  print("🔔 Background Issue Alert Received");
+
+  final prefs = await SharedPreferences.getInstance();
+  final regNo = prefs.getString("regNo");
+
+  if (regNo != null) {
+    await FirebaseDatabase.instance
+        .ref("notifications/$regNo")
+        .push()
+        .set({
+      "title": message.notification?.title ?? "",
+      "body": message.notification?.body ?? "",
+      "timestamp": ServerValue.timestamp,
+      "read": false,
+    });
+  }
+
+  // 🔥 ADD THIS BELOW
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+  FlutterLocalNotificationsPlugin();
+  const AndroidInitializationSettings initializationSettingsAndroid =
+  AndroidInitializationSettings('@mipmap/ic_launcher');
+
+  final InitializationSettings initializationSettings =
+  InitializationSettings(
+    android: initializationSettingsAndroid,
+  );
+
+  await flutterLocalNotificationsPlugin.initialize(
+    initializationSettings,
+  );
+
+  const AndroidNotificationDetails androidPlatformChannelSpecifics =
+  AndroidNotificationDetails(
+    'bus_alerts',
+    'Bus Alerts',
+    importance: Importance.high,
+    priority: Priority.high,
+  );
+
+  const NotificationDetails platformChannelSpecifics =
+  NotificationDetails(android: androidPlatformChannelSpecifics);
+
+  await flutterLocalNotificationsPlugin.show(
+    0,
+    message.notification?.title ?? "Issue Alert",
+    message.notification?.body ?? "Bus Issue Reported",
+    platformChannelSpecifics,
+  );
 }
 Future<void> saveNotification(RemoteMessage message) async {
   final user = FirebaseAuth.instance.currentUser;
@@ -40,15 +90,59 @@ Future<void> saveNotification(RemoteMessage message) async {
 
   print("✅ Notification saved in database");
 }
+Future<void> handleInitialMessage() async {
+
+  RemoteMessage? initialMessage =
+  await FirebaseMessaging.instance.getInitialMessage();
+
+  if (initialMessage != null) {
+
+    print("📩 App opened from KILLED notification");
+
+    final prefs = await SharedPreferences.getInstance();
+    final regNo = prefs.getString("regNo");
+
+    if (regNo == null) return;
+
+    await FirebaseDatabase.instance
+        .ref("notifications/$regNo")
+        .push()
+        .set({
+      "title": initialMessage.notification?.title ?? "Notification",
+      "body": initialMessage.notification?.body ?? "",
+      "timestamp": ServerValue.timestamp,
+      "read": false,
+    });
+  }
+}
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
+  await handleInitialMessage();
+  // 🔥 ISSUE ALERT NOTIFICATION CHANNEL (ADD THIS)
+  const AndroidNotificationChannel channel = AndroidNotificationChannel(
+    'bus_alerts',
+    'Bus Alerts',
+    description: 'Bus issue notifications',
+    importance: Importance.high,
+  );
+
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+  FlutterLocalNotificationsPlugin();
+
+  await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>()
+      ?.createNotificationChannel(channel);
+
+  // 🔥 KEEP THIS BELOW
+  await initializeService();
 
   /// 🔥 REGISTER BACKGROUND HANDLER
   FirebaseMessaging.onBackgroundMessage(
       _firebaseMessagingBackgroundHandler);
 
-  /// 🔥 REQUEST NOTIFICATION PERMISSION (Android 13+ / iOS)
+  /// 🔥 REQUEST NOTIFICATION PERMISSION
   await FirebaseMessaging.instance.requestPermission(
     alert: true,
     badge: true,
@@ -64,7 +158,6 @@ Future<void> main() async {
   FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
     print("📩 Foreground notification received");
 
-    // ✅ SAVE TO FIREBASE
     await saveNotification(message);
 
     if (message.notification != null &&
@@ -80,17 +173,16 @@ Future<void> main() async {
       );
     }
   });
+
   /// 🔥 WHEN USER CLICKS NOTIFICATION
   FirebaseMessaging.onMessageOpenedApp.listen(
           (RemoteMessage message) async {
         print("🔥 Notification clicked");
-
         await saveNotification(message);
       });
 
   runApp(const MyApp());
 }
-
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
