@@ -64,8 +64,13 @@ class _StudentHomePageState extends State<StudentHomePage> {
           .ref("notifications/$regNo")
           .push()
           .set({
-        "title": message.notification?.title ?? "Notification",
-        "body": message.notification?.body ?? "",
+        "title": message.data['title'] ??
+            message.notification?.title ??
+            "Notification",
+
+        "body": message.data['body'] ??
+            message.notification?.body ??
+            "",
         "timestamp": ServerValue.timestamp,
         "read": false,
       });
@@ -152,8 +157,15 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
       if (regNo == null) return;
 
-      String title = message.notification?.title ?? "Notification";
-      String body = message.notification?.body ?? "";
+      String title =
+          message.data['title'] ??
+              message.notification?.title ??
+              "Notification";
+
+      String body =
+          message.data['body'] ??
+              message.notification?.body ??
+              "";
 
       // 🔥 SAVE TO FIREBASE
       await FirebaseDatabase.instance

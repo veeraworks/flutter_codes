@@ -1,28 +1,38 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     package="com.example.project_spt">
 
+    <!-- INTERNET -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+    <!-- LOCATION -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+
+    <!-- FOREGROUND SERVICE -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+
+    <!-- ANDROID 13+ NOTIFICATIONS -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true"
-        android:foregroundServiceType="location">
+        android:usesCleartextTraffic="true">
 
+        <!-- GOOGLE MAPS -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="AIzaSyAeAYcObFrWvXkt3HEGutI7W6Pp7MOWv2k"/>
 
+        <!-- FCM CHANNEL -->
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
-            android:value="high_importance_channel"/>
+            android:value="bus_alerts"/>
 
+        <!-- MAIN ACTIVITY -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -44,11 +54,14 @@
 
         </activity>
 
+        <!-- BACKGROUND LOCATION SERVICE -->
         <service
             android:name="id.flutter.flutter_background_service.BackgroundService"
             android:foregroundServiceType="location"
-            android:exported="false"/>
+            android:exported="true"
+            tools:replace="android:exported"/>
 
+        <!-- FLUTTER EMBEDDING -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2"/>
