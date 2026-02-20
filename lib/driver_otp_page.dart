@@ -34,26 +34,35 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
 
     try {
       final response = await http.post(
-        Uri.parse("http://10.17.162.165:3000/drivers/check-driver"), // ✅ FIXED IP
+        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/check-driver"), // ✅ FIXED IP
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "phone": widget.phoneNumber,
         }),
       ).timeout(const Duration(seconds: 8));
 
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
 
         if (data["driver"] != null) {
 
+          final driver = data["driver"];
+
+          print("Driver Data → $driver"); // 🔍 Debug
+
           final prefs = await SharedPreferences.getInstance();
 
-          await prefs.setString("driverName", data["driver"]["name"]);
-          await prefs.setString("busId", data["driver"]["busId"]);
-          await prefs.setString("routeName", data["driver"]["busName"] ?? "");
-          await prefs.setString("busNumber", data["driver"]["busId"]);
-          await prefs.setBool("isTempBusActive", false);
+          // ✅ SAVE ALL REQUIRED VALUES
+          await prefs.setString("busId", driver["busId"] ?? "");
+          await prefs.setString("permBusId", driver["busId"] ?? "");
+          await prefs.setString("busNumber", driver["busNumber"] ?? "");
+          await prefs.setString("routeName", driver["routeName"] ?? "");
+          await prefs.setString("shift", driver["shift"] ?? "");
 
+          await prefs.setBool("isLoggedIn", true);
+          await prefs.setString("role", "driver");
+          await prefs.setBool("isTempBusActive", false);
           if (!mounted) return;
 
           Navigator.pushReplacement(

@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'student_home_page.dart';
 
 class StudentOtpPage extends StatefulWidget {
@@ -17,24 +20,71 @@ class StudentOtpPage extends StatefulWidget {
 
 class _StudentOtpPageState extends State<StudentOtpPage> {
   final TextEditingController otpController = TextEditingController();
+  bool isLoading = false;
 
-  void _submitOtp() {
+  Future<void> _submitOtp() async {
     if (otpController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Please enter OTP"),
-          backgroundColor: Colors.red,
-        ),
+        const SnackBar(content: Text("Enter OTP")),
       );
       return;
     }
 
-    // ✅ After OTP → Student Home
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (context) => StudentHomePage()),
-          (route) => false,
-    );
+    setState(() => isLoading = true);
+
+    try {
+      final response = await http.post(
+        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/check-student"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "regNo": widget.studentId,
+          "phone": widget.phoneNumber,
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data["student"] != null) {
+
+        final student = data["student"];
+
+        final prefs = await SharedPreferences.getInstance();
+
+        await prefs.setBool("isLoggedIn", true);
+        await prefs.setString("role", "student");
+        await prefs.setString("studentId", student["regNo"] ?? "");
+        await prefs.setString("studentName", student["name"] ?? "");
+        await prefs.setString("routeName", student["route"] ?? "");
+        await prefs.setString("busNumber", student["busNo"] ?? "");
+        await prefs.setString("busId", student["busId"] ?? ""); // 🔥 ADD THIS
+        await prefs.setString("boardingPoint", student["boardingPoint"] ?? "");
+
+        if (!mounted) return;
+
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const StudentHomePage()),
+              (route) => false,
+        );
+
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Student not found")),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Server not reachable")),
+      );
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    otpController.dispose();
+    super.dispose();
   }
 
   @override
@@ -43,7 +93,10 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
       backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.teal,
-        title: const Text("OTP Verification", style: TextStyle(color: Colors.white)),
+        title: const Text(
+          "OTP Verification",
+          style: TextStyle(color: Colors.white),
+        ),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: Center(
@@ -65,7 +118,6 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-
                 CircleAvatar(
                   radius: 36,
                   backgroundColor: Colors.teal.withOpacity(0.15),
@@ -96,7 +148,8 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
                   controller: otpController,
                   keyboardType: TextInputType.number,
                   decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.password, color: Colors.teal),
+                    prefixIcon:
+                    const Icon(Icons.password, color: Colors.teal),
                     hintText: "Enter OTP",
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -110,14 +163,18 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
                   width: double.infinity,
                   height: 52,
                   child: ElevatedButton(
-                    onPressed: _submitOtp,
+                    onPressed: isLoading ? null : _submitOtp,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.teal,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(30),
                       ),
                     ),
-                    child: const Text(
+                    child: isLoading
+                        ? const CircularProgressIndicator(
+                      color: Colors.white,
+                    )
+                        : const Text(
                       "SUBMIT",
                       style: TextStyle(
                         fontSize: 16,

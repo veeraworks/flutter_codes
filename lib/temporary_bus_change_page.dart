@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,16 +15,16 @@ class TemporaryBusChangePage extends StatefulWidget {
 class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
   final TextEditingController busController = TextEditingController();
 
-  String currentBus = "Not Assigned";
-  String currentRoute = "Madambakkam";
-  String selectedRoute = "Madambakkam";
+  String currentBus = "-";
+  String currentRoute = "-";
+  String selectedRoute = "";
 
   bool isTempActive = false; // 🔥 KEY FLAG
 
   final List<String> routes = [
     "Ashok Pillar",
     "Koyambedu",
-    "Madambakkam"
+    "Madambakkam",
     "Nesapakkam",
     "Madipakkam",
     "Velachery",
@@ -42,17 +44,24 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
   Future<void> _loadBusInfo() async {
     final prefs = await SharedPreferences.getInstance();
 
+    String savedBus = prefs.getString("busNumber") ?? "-";
+    String savedRoute = prefs.getString("routeName") ?? "";
+
+    // Ensure route exists in dropdown
+    if (!routes.contains(savedRoute)) {
+      savedRoute = routes.isNotEmpty ? routes.first : "";
+    }
+
     setState(() {
       isTempActive = prefs.getBool("isTempBusActive") ?? false;
-      currentBus = prefs.getString("busNumber") ?? "9";
-      currentRoute = prefs.getString("routeName") ?? "Madambakkam";
-      selectedRoute = currentRoute;
+      currentBus = savedBus;
+      currentRoute = savedRoute;
+      selectedRoute = savedRoute;
     });
 
-    // 🔥 STORE ORIGINAL BUS/ROUTE ON FIRST LOAD (if not already stored)
     if (!prefs.containsKey("originalBusNumber")) {
-      await prefs.setString("originalBusNumber", currentBus);
-      await prefs.setString("originalRoute", currentRoute);
+      await prefs.setString("originalBusNumber", savedBus);
+      await prefs.setString("originalRoute", savedRoute);
     }
   }
 
@@ -62,54 +71,70 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
     final String? originalBus = prefs.getString("originalBusNumber");
     final String? busId = prefs.getString("busId");
 
-    if (originalBus == null) {
+    if (originalBus == null || busId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Original bus not found")),
+        const SnackBar(content: Text("Bus information missing")),
       );
       return;
     }
 
     final String newBus =
-        busController.text.trim().isNotEmpty
-            ? busController.text.trim()
-            : originalBus;
+    busController.text.trim().isNotEmpty
+        ? busController.text.trim()
+        : originalBus;
 
-    await prefs.setString("busNumber", newBus);
-    await prefs.setString("tempBusNumber", newBus);
-    await prefs.setString("routeName", selectedRoute);
-    await prefs.setBool("isTempBusActive", true);
+    try {
+      // ✅ UPDATE LOCAL STORAGE
+      await prefs.setString("tempBusNumber", newBus);
+      await prefs.setString("tempRouteName", selectedRoute);
+      await prefs.setBool("isTempBusActive", true);
 
-    if (busId != null) {
+      // ✅ UPDATE FIREBASE REALTIME DB
       await FirebaseDatabase.instance
-          .ref("temporaryBus/$busId")
+          .ref("temporaryBusChanges/$busId")
           .set({
-        "active": true,
-        "tempBusNumber": newBus,
+        "newBus": newBus,
         "tempRoute": selectedRoute,
+        "status": "ACTIVE",
         "updatedAt": ServerValue.timestamp,
-      }).catchError((e) {
-        print("Firebase error: $e");
       });
+
+      // ✅ CALL BACKEND (SENDS NOTIFICATION TO BUS TOPIC)
+      await http.post(
+        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/temporary-bus"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "busId": busId,
+          "newBus": newBus,
+          "status": "ACTIVE",
+        }),
+      );
+
+      setState(() {
+        isTempActive = true;
+        currentBus = newBus;
+        currentRoute = selectedRoute;
+      });
+
+      busController.clear();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Temporary bus applied successfully")),
+      );
+
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted) Navigator.pop(context, true);
+      });
+
+    } catch (e) {
+      print("Temporary Bus Error: $e");
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Something went wrong")),
+      );
     }
-
-    busController.clear();
-
-    // 🔥 UPDATE UI IMMEDIATELY
-    setState(() {
-      isTempActive = true;
-      currentBus = newBus;
-      currentRoute = selectedRoute;
-    });
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Temporary bus applied successfully")),
-    );
-
-    // 🔥 RETURN TRUE TO NOTIFY HOME PAGE AFTER SNACKBAR
-    Future.delayed(const Duration(milliseconds: 800), () {
-      if (mounted) Navigator.pop(context, true);
-    });
   }
 
   // ================= CLEAR TEMP CHANGE =================
@@ -119,45 +144,64 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
     final String? originalRoute = prefs.getString("originalRoute");
     final String? busId = prefs.getString("busId");
 
-    if (originalBus == null) return;
-
-    await prefs.setBool("isTempBusActive", false);
-    await prefs.remove("tempBusNumber");
-    await prefs.setString("busNumber", originalBus);
-    if (originalRoute != null) {
-      await prefs.setString("routeName", originalRoute);
+    if (originalBus == null || busId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Original bus not found")),
+      );
+      return;
     }
 
-    if (busId != null) {
+    try {
+      // ✅ RESET LOCAL STORAGE
+      await prefs.setBool("isTempBusActive", false);
+      await prefs.remove("tempBusNumber");
+      await prefs.remove("tempRouteName");
+
+      // ✅ UPDATE FIREBASE
       await FirebaseDatabase.instance
-          .ref("temporaryBus/$busId")
+          .ref("temporaryBusChanges/$busId")
           .update({
-        "active": false,
+        "newBus": null,
+        "tempRoute": null,
+        "status": "CLEARED",
         "updatedAt": ServerValue.timestamp,
-      }).catchError((e) {
-        print("Firebase error: $e");
       });
+
+      // ✅ CALL BACKEND (NOTIFY RESTORE)
+      await http.post(
+        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/temporary-bus"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+      "busId": busId,
+      "status": "CLEARED",
+       }),
+      );
+
+      setState(() {
+        isTempActive = false;
+        currentBus = originalBus;
+        currentRoute = originalRoute ?? "Madambakkam";
+        selectedRoute = currentRoute;
+      });
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Temporary bus cleared")),
+      );
+
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted) Navigator.pop(context, true);
+      });
+
+    } catch (e) {
+      print("Clear Temp Error: $e");
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Something went wrong")),
+      );
     }
-
-    // 🔥 UPDATE UI IMMEDIATELY
-    setState(() {
-      isTempActive = false;
-      currentBus = originalBus;
-      currentRoute = originalRoute ?? "Madambakkam";
-      selectedRoute = currentRoute;
-    });
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Temporary bus cleared")),
-    );
-
-    // 🔥 RETURN TRUE TO NOTIFY HOME PAGE AFTER SNACKBAR
-    Future.delayed(const Duration(milliseconds: 800), () {
-      if (mounted) Navigator.pop(context, true);
-    });
   }
-
   // ================= UI =================
   @override
   Widget build(BuildContext context) {
@@ -194,7 +238,7 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
 
             const SizedBox(height: 24),
 
-            // -------- TEMP CHANGE --------
+            // -------- TEMP CHANGE -----------------------------------
             Container(
               padding: const EdgeInsets.all(16),
               decoration: _cardDecoration(),

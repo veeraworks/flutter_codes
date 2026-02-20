@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
@@ -22,6 +24,7 @@ class DriverHomePage extends StatefulWidget {
 
 class _DriverHomePageState extends State<DriverHomePage> {
   bool tripStarted = false;
+  String? tripMode;
   bool _initialized = false;
   // 🔑 BUS INFO STATE (ADDED)
   String busNumber = "-";
@@ -29,13 +32,22 @@ class _DriverHomePageState extends State<DriverHomePage> {
   String shift = "-";
   bool isTempBusActive = false;
 
+  // NEW: keep permanent and temporary values separate
+  String permBusNumber = "-";
+  String permRouteName = "-";
+  String? tempBusNumber;
+  String? tempRouteName;
+
 
   bool gpsOn = false;
   bool internetOn = false;
   bool locationSyncOn = false;
-
+  bool tripEnding = false;
   String? busId;
+  String? permBusId;
+  String? currentTripId;
   StreamSubscription<Position>? positionStream;
+  StreamSubscription? _tempBusListener;
 
   // 🗺️ MAP STATE
   GoogleMapController? _mapController;
@@ -52,17 +64,30 @@ class _DriverHomePageState extends State<DriverHomePage> {
   @override
   void initState() {
     super.initState();
+    _refreshDriverProfile();
     _initialize();
   }
 
   Future<void> _initialize() async {
     final prefs = await SharedPreferences.getInstance();
 
-    await prefs.setBool("trackingActive", false);
 
     await _loadBusId();
+    final wasTracking = prefs.getBool("trackingActive") ?? false;
+    final savedTripId = prefs.getString("activeTripId");
+
+    if (wasTracking && savedTripId != null) {
+      setState(() {
+        tripStarted = true;
+        currentTripId = savedTripId;
+        tripMode = prefs.getString("tripMode");
+      });
+
+      _startLocationUpdates();
+    }
     await _loadBusInfo();
     await _checkStatuses();
+    await _listenToTemporaryBus();
 
     setState(() {
       _initialized = true;
@@ -72,14 +97,17 @@ class _DriverHomePageState extends State<DriverHomePage> {
   @override
   void dispose() {
     positionStream?.cancel();
+    _tempBusListener?.cancel();
     super.dispose();
   }
 
   // ================= LOAD BUS ID ====================================
   Future<void> _loadBusId() async {
     final prefs = await SharedPreferences.getInstance();
+
     setState(() {
-      busId = prefs.getString("busId");
+      permBusId = prefs.getString("busId");
+      busId = permBusId;
     });
   }
 // ================= LOAD BUS INFO (ADDED) =================
@@ -87,12 +115,55 @@ class _DriverHomePageState extends State<DriverHomePage> {
     final prefs = await SharedPreferences.getInstance();
 
     setState(() {
-      busNumber = prefs.getString("busNumber") ?? "-";
-      routeName = prefs.getString("routeName") ?? "-";
+      // Permanent
+      permBusNumber = prefs.getString("busNumber") ?? "-";
+      permRouteName = prefs.getString("routeName") ?? "-";
       shift = prefs.getString("shift") ?? "-";
+
+      // Temporary
       isTempBusActive = prefs.getBool("isTempBusActive") ?? false;
+      tempBusNumber = prefs.getString("tempBusNumber");
+      tempRouteName = prefs.getString("tempRouteName");
     });
-    print("HOME RELOAD → busNumber=$busNumber, isTempBusActive=$isTempBusActive");
+
+    print("Permanent → $permBusNumber | $permRouteName");
+    print("Temporary Active → $isTempBusActive");
+  }
+//===================== LISTEN TO TEMPORARY BUS CHANGES ==========================
+  Future<void> _listenToTemporaryBus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final permId = prefs.getString("busId");
+    if (permId == null) return;
+
+    _tempBusListener = FirebaseDatabase.instance
+        .ref("temporaryBusChanges/$permId")
+        .onValue
+        .listen((event) {
+
+      final data = event.snapshot.value as Map?;
+
+      if (data != null && data["status"] == "ACTIVE") {
+
+        setState(() {
+          isTempBusActive = true;
+          tempBusNumber = data["newBus"];
+          tempRouteName = data["tempRoute"];
+
+          // ✅ VERY IMPORTANT
+          busId = data["newBus"];
+        });
+
+      } else {
+
+        setState(() {
+          isTempBusActive = false;
+          tempBusNumber = null;
+          tempRouteName = null;
+
+          busId = permBusId;
+        });
+      }
+    });
   }
 
   // ---------------- CHECK GPS / INTERNET ---------------------------------------
@@ -109,8 +180,18 @@ class _DriverHomePageState extends State<DriverHomePage> {
       internetOn = netEnabled;
       locationSyncOn = tripStarted && gpsOn && internetOn;
     });
-  }
 
+    // AUTO STOP TRIP IF GPS TURNED OFF
+    if (tripStarted && !gpsOn && !tripEnding) {
+      tripEnding = true;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("GPS turned OFF! Trip stopped")),
+      );
+
+      _endTripFromBackend();
+    }
+  }
   // ================= START GPS TRACKING ==================================
   Future<void> _startLocationUpdates() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -136,7 +217,8 @@ class _DriverHomePageState extends State<DriverHomePage> {
         accuracy: LocationAccuracy.high,
         distanceFilter: 5,
       ),
-    ).listen((position) {print("GPS UPDATE → ${position.latitude}, ${position.longitude}");
+    ).listen((position) {
+      print("GPS UPDATE → ${position.latitude}, ${position.longitude}");
 
     if (!tripStarted) {
       print("GPS running but trip not started");
@@ -186,134 +268,133 @@ class _DriverHomePageState extends State<DriverHomePage> {
       );
 
       // Update Firebase only if busId exists (non-blocking)
-      if (busId != null) {
-        FirebaseDatabase.instance.ref("buses/$busId").set({
+      // Update Firebase only if busId exists AND internet is ON
+      if (busId != null && internetOn) {
+        FirebaseDatabase.instance.ref("buses/$busId").update({
           "lat": position.latitude,
           "lng": position.longitude,
+          "bearing": position.heading,
           "updatedAt": ServerValue.timestamp,
         }).catchError((e) {
-          // optional: log error but don't block UI
           print("Failed to update bus location: $e");
         });
       }
     });
   }
+  //==================== START TRIP WITH MODE (NEW) =================
+  Future<void> _startTripWithMode(String mode) async {
 
-  // ---------------- START / END TRIP --------------------------------------
-  Future<void> _toggleTrip() async {
+    if (busId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Bus ID not found")),
+      );
+      return;
+    }
     await _checkStatuses();
 
-    // 🔍 DEBUG LINE — PASTE EXACTLY HERE
-    print("busId: $busId, gpsOn: $gpsOn, internetOn: $internetOn");
-
-    // Do NOT return early when busId is null — allow local start/end
-    if (!tripStarted) {
-      if (!gpsOn) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Please enable GPS")),
-        );
-        await Geolocator.openLocationSettings();
-        return;
-      }
-
-      if (!internetOn) {
-        // allow starting locally but warn the user
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Internet is off — tracking will run locally")),
-        );
-      }
-
-      // Immediately update UI so button changes to "End Trip" and map appears
-      setState(() {
-        tripStarted = true;
-        _routePoints.clear();
-        _polylines.clear();
-        _startMarker = Marker(
-          markerId: const MarkerId("start"),
-          position: _currentLatLng,
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueGreen,
-          ),
-        );
-      });
-
-      SharedPreferences.getInstance().then((prefs) {
-        prefs.setBool("trackingActive", true);
-      });
-
-      // Start location updates without blocking the UI (don't await)
-      _startLocationUpdates();
-
-      // Update Firebase status non-blocking (only if busId present)
-      if (busId != null) {
-        FirebaseDatabase.instance
-            .ref("busTrips/$busId/status")
-            .set("STARTED")
-            .catchError((e) {
-          print("Failed to set STARTED status: $e");
-        });
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Bus ID not found — running in local mode")),
-        );
-      }
-    } else {
-      // End trip: cancel stream and update U I immediately
-      await positionStream?.cancel();
-      positionStream = null;
-      if (_routePoints.isNotEmpty) {
-        _endMarker = Marker(
-          markerId: const MarkerId("end"),
-          position: _routePoints.last,
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueRed,
-          ),
-        );
-      }
-
-      setState(() {
-        tripStarted = false;
-        _routePoints.clear();
-        _polylines.clear();
-      });
-
-      SharedPreferences.getInstance().then((prefs) {
-        prefs.setBool("trackingActive", false);
-      });
-
-      // Update Firebase status non-blocking if busId present
-      if (busId != null) {
-        FirebaseDatabase.instance
-            .ref("busTrips/$busId/status")
-            .set("ENDED")
-            .catchError((e) {
-          print("Failed to set ENDED status: $e");
-        });
-      }
-      // 🔥 AUTO CLEAR TEMP BUS ON END TRIP
-      final prefs = await SharedPreferences.getInstance();
-      final bool isTempActive = prefs.getBool("isTempBusActive") ?? false;
-
-      if (isTempActive) {
-        await prefs.setBool("isTempBusActive", false);
-
-        // optional backend update
-        if (busId != null) {
-          FirebaseDatabase.instance
-              .ref("temporaryBus/$busId")
-              .update({
-            "active": false,
-            "updatedAt": ServerValue.timestamp,
-          });
-        }
-
-        // reload home page bus info
-        await _loadBusInfo();
-      }
-
+    if (!gpsOn || !internetOn) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Enable GPS & Internet first")),
+      );
+      return;
     }
 
-    await _checkStatuses();
+    final response = await http.post(
+      Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/start-trip"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "busId": busId,
+        "mode": mode,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+
+      currentTripId = data["tripId"];
+
+      setState(() {
+        tripStarted = true;
+        tripMode = mode;
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool("trackingActive", true);
+      await prefs.setString("activeTripId", currentTripId!);
+      await prefs.setString("tripMode", mode);
+
+      await _checkStatuses();
+
+      _startLocationUpdates();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("$mode trip started")),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Failed to start trip")),
+      );
+    }
+  }
+
+  //==================== END TRIP WITH MODE (NEW) =================
+  Future<void> _endTripFromBackend() async {
+    if (busId == null || currentTripId == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+
+    // 🔥 CLEAR LOCAL TRIP DATA
+    await prefs.setBool("trackingActive", false);
+    await prefs.remove("activeTripId");
+    await prefs.remove("tripMode");
+
+    final response = await http.post(
+      Uri.parse(
+          "https://null-sheldon-unstudded.ngrok-free.dev/drivers/end-trip"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "busId": busId,
+        "tripId": currentTripId,
+      }),
+    );
+
+    await positionStream?.cancel();
+
+    setState(() {
+      tripStarted = false;
+      currentTripId = null;
+      tripEnding = false;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Trip Ended")),
+    );
+  }
+
+  Future<void> _refreshDriverProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    final phone = prefs.getString("phone");
+
+    if (phone == null) return;
+
+    final response = await http.get(
+      Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/profile?phone=$phone"),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+
+      setState(() {
+        permBusNumber = data["busId"];
+        permRouteName = data["busName"];
+
+        busNumber = permBusNumber;
+        routeName = permRouteName;
+      });
+
+      await prefs.setString("busId", data["busId"]);
+      await prefs.setString("busNumber", data["busId"]);
+      await prefs.setString("routeName", data["busName"]);
+    }
   }
 
   // ---------------- UI ----------------
@@ -436,7 +517,11 @@ class _DriverHomePageState extends State<DriverHomePage> {
                       style: TextStyle(color: Colors.white, fontSize: 22),
                     ),
                     Text(
-                      tripStarted ? 'ON DUTY' : 'OFF DUTY',
+                      tripStarted
+                          ? (isTempBusActive
+                          ? 'TEMP ${tripMode ?? ""} DUTY'
+                          : '${tripMode ?? ""} DUTY')
+                          : 'OFF DUTY',
                       style: const TextStyle(color: Colors.white70),
                     ),
                   ],
@@ -450,24 +535,50 @@ class _DriverHomePageState extends State<DriverHomePage> {
           _infoCard(
             title: 'Bus Information',
             children: [
-              _infoRow('Route', routeName),
-              _infoRow('Bus Number', busNumber),
+              // show permanent values as before
+              _infoRow(
+                'Route',
+                isTempBusActive ? "$permRouteName (Original)" : permRouteName,
+              ),
+
+              _infoRow(
+                'Bus Number',
+                isTempBusActive ? "$permBusNumber (Original)" : permBusNumber,
+              ),
               _infoRow('Shift', shift),
 
+              // show temporary details only under this card (do not replace permanent display)
               if (isTempBusActive)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    "TEMPORARY BUS ACTIVE",
-                    style: const TextStyle(
-                      color: Colors.orange,
-                      fontWeight: FontWeight.bold,
-                    ),
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.orange),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded,
+                          color: Colors.orange),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          "Temporary Bus Active\n"
+                              "Bus: ${tempBusNumber ?? "-"}\n"
+                              "Route: ${tempRouteName ?? "-"}",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black87,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
             ],
           ),
-
           const SizedBox(height: 16),
 
           _infoCard(
@@ -535,32 +646,74 @@ class _DriverHomePageState extends State<DriverHomePage> {
                 ),
               ),
             ),
-
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-            child: GestureDetector(
-              onTap: _toggleTrip,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                width: double.infinity,
+            child: tripStarted
+                ? GestureDetector(
+              onTap: _endTripFromBackend,
+              child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 18),
                 decoration: BoxDecoration(
-                  color: tripStarted ? Colors.red : const Color(0xFF00BFA6),
+                  color: Colors.red,
                   borderRadius: BorderRadius.circular(18),
                 ),
-                child: Center(
+                child: const Center(
                   child: Text(
-                    tripStarted ? 'End Trip' : 'Start Trip',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    'End Trip',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600),
                   ),
                 ),
               ),
+            )
+                : Column(
+              children: [
+                GestureDetector(
+                  onTap: () => _startTripWithMode("MORNING"),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00BFA6),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: const Center(
+                      child: Text(
+                        'Start Morning Trip',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                GestureDetector(
+                  onTap: () => _startTripWithMode("EVENING"),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    decoration: BoxDecoration(
+                      color: Colors.orange,
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: const Center(
+                      child: Text(
+                        'Start Evening Trip',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          )
+          ),
         ],
       ),
     );

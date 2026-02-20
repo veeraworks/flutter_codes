@@ -2,9 +2,12 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'student_home_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'student_otp_page.dart';
 import 'student_signup_page.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // 🔥 kept as requested
+import 'package:firebase_auth/firebase_auth.dart';
+import 'config.dart';
+
 
 class StudentLoginPage extends StatefulWidget {
   const StudentLoginPage({super.key});
@@ -36,6 +39,8 @@ class _StudentLoginPageState extends State<StudentLoginPage>
     _shakeAnimation = Tween<double>(begin: 0, end: 10)
         .chain(CurveTween(curve: Curves.elasticIn))
         .animate(_shakeController);
+
+    _checkAutoLogin();
   }
 
   @override
@@ -64,7 +69,7 @@ class _StudentLoginPageState extends State<StudentLoginPage>
 
     try {
       final response = await http.post(
-        Uri.parse("http://10.17.162.165:3000/students/check-student"),
+        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/check-student"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "regNo": studentId,
@@ -102,6 +107,20 @@ class _StudentLoginPageState extends State<StudentLoginPage>
           content: Text("Server not reachable"),
           backgroundColor: Colors.red,
         ),
+      );
+    }
+  }
+  // ---------------AUTO LOGIN----------------------------------------------
+  Future<void> _checkAutoLogin() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+
+    bool? isLoggedIn = prefs.getBool("isLoggedIn");
+    String? role = prefs.getString("role");
+
+    if (isLoggedIn == true && role == "student") {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const StudentHomePage()),
       );
     }
   }

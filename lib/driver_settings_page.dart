@@ -1,5 +1,9 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
+import 'package:project_spt/main.dart';
 import 'driver_about_app_page.dart';
+import 'driver_login_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class DriverSettingsPage extends StatefulWidget {
@@ -11,6 +15,7 @@ class DriverSettingsPage extends StatefulWidget {
 
 class _DriverSettingsPageState extends State<DriverSettingsPage> {
   bool notificationsOn = true;
+  bool isTripActive = false;
   String trackingStatus = "Inactive";
 
   @override
@@ -25,15 +30,34 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
 
     setState(() {
       trackingStatus = isActive ? "Active" : "Inactive";
+      isTripActive = isActive;
     });
   }
-
-  void _logout() async {
+  Future<void> _logout() async {
     final prefs = await SharedPreferences.getInstance();
+    final bool isTracking = prefs.getBool("trackingActive") ?? false;
+
+    // 🚫 BLOCK LOGOUT IF TRIP ACTIVE
+    if (isTracking) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("End Trip before logging out"),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // ✅ SAFE LOGOUT
     await prefs.clear();
 
     if (!mounted) return;
-    Navigator.pop(context);
+
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const WelcomePage()),
+          (route) => false,
+    );
   }
 
   @override
@@ -101,9 +125,9 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
             width: double.infinity,
             height: 48,
             child: ElevatedButton(
-              onPressed: _logout,
+              onPressed: isTripActive ? null : _logout,
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
+                backgroundColor: isTripActive ? Colors.grey : Colors.red,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
                 ),

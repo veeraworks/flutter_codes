@@ -1,7 +1,38 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-class DriverProfilePage extends StatelessWidget {
+class DriverProfilePage extends StatefulWidget {
   const DriverProfilePage({super.key});
+
+  @override
+  State<DriverProfilePage> createState() => _DriverProfilePageState();
+}
+
+class _DriverProfilePageState extends State<DriverProfilePage> {
+
+  String driverName = "-";
+  String busId = "-";
+  String routeName = "-";
+  String busNumber = "-";
+  String phoneNumber = "-";
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDriverData();
+  }
+
+  Future<void> _loadDriverData() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    setState(() {
+      driverName = prefs.getString("driverName") ?? "-";
+      busId = prefs.getString("busId") ?? "-";
+      routeName = prefs.getString("routeName") ?? "-";
+      busNumber = prefs.getString("busNumber") ?? "-";
+      phoneNumber = prefs.getString("phoneNumber") ?? "-";
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -31,19 +62,20 @@ class DriverProfilePage extends StatelessWidget {
                 ],
               ),
               child: Column(
-                children: const [
-                  CircleAvatar(
+                children: [
+                  const CircleAvatar(
                     radius: 40,
                     backgroundColor: Color(0xFFE0F7F3),
                     child: Icon(Icons.person,
                         size: 40, color: Color(0xFF00BFA6)),
                   ),
-                  SizedBox(height: 16),
-                  _ProfileRow("Name", "Ravi Kumar"),
-                  _ProfileRow("Driver ID", "DRV102"),
-                  _ProfileRow("Route", "Madambakkam"),
-                  _ProfileRow("Bus Number", "9"),
-                  _ProfileRow("Phone", "9876543210"),
+                  const SizedBox(height: 16),
+
+                  _ProfileRow("Name", driverName),
+                  _ProfileRow("Bus ID", busId),
+                  _ProfileRow("Route", routeName),
+                  _ProfileRow("Bus Number", busNumber),
+                  _ProfileRow("Phone", phoneNumber),
                 ],
               ),
             ),
