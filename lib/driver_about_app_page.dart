@@ -19,7 +19,7 @@ class AboutAppPage extends StatelessWidget {
             const SizedBox(height: 40),
 
             const Icon(
-              Icons.directions_bus,
+              Icons.directions_bus_filled,
               size: 80,
               color: Color(0xFF00BFA6),
             ),
@@ -27,7 +27,7 @@ class AboutAppPage extends StatelessWidget {
             const SizedBox(height: 20),
 
             const Text(
-              "Smart Bus Tracking",
+              "Smart Bus Tracking Management",
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
@@ -43,9 +43,11 @@ class AboutAppPage extends StatelessWidget {
 
             const SizedBox(height: 30),
 
-            _infoRow("Developed For", "Sairam Institutions"),
-            _infoRow("Project Type", "Mobile Application"),
-            _infoRow("Purpose", "Real-time bus tracking"),
+            _infoRow("Institution", "Sairam Institutions"),
+            _infoRow("System", "Real-Time Bus Tracking"),
+            _infoRow("Temporary Bus Support", "Available"),
+            _infoRow("Trip Monitoring", "Morning / Evening"),
+            _infoRow("Notifications", "Trip Alerts"),
 
             const Spacer(),
 

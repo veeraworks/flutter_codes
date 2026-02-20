@@ -54,16 +54,15 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
           final prefs = await SharedPreferences.getInstance();
 
           // ✅ SAVE ALL REQUIRED VALUES
-          await prefs.setString("driverName", driver["name"] ?? "");
-          await prefs.setString("phoneNumber", widget.phoneNumber);
           await prefs.setString("busId", driver["busId"] ?? "");
-          await prefs.setString("busNumber", driver["busName"] ?? "");
-          await prefs.setString("routeName", driver["busName"] ?? "");
-          await prefs.setString("shift", driver["shift"] ?? "Morning");
-          await prefs.setBool("isTempBusActive", false);
+          await prefs.setString("permBusId", driver["busId"] ?? "");
+          await prefs.setString("busNumber", driver["busNumber"] ?? "");
+          await prefs.setString("routeName", driver["routeName"] ?? "");
+          await prefs.setString("shift", driver["shift"] ?? "");
+
           await prefs.setBool("isLoggedIn", true);
           await prefs.setString("role", "driver");
-
+          await prefs.setBool("isTempBusActive", false);
           if (!mounted) return;
 
           Navigator.pushReplacement(

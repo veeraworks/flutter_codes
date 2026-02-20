@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'driver_signup_page.dart';
 import 'driver_otp_page.dart';
 
 class DriverLoginPage extends StatefulWidget {
@@ -80,11 +79,14 @@ class _DriverLoginPageState extends State<DriverLoginPage>
         print("BACKEND DRIVER DATA: $driver");
 
         final prefs = await SharedPreferences.getInstance();
-
         await prefs.setString("busId", driver["busId"] ?? "");
+        await prefs.setString("permBusId", driver["busId"] ?? "");
         await prefs.setString("busNumber", driver["busNumber"] ?? "");
         await prefs.setString("routeName", driver["routeName"] ?? "");
         await prefs.setString("shift", driver["shift"] ?? "");
+
+        await prefs.setString("driverName", driver["name"] ?? "");
+        await prefs.setString("phoneNumber", phone);
 
         await prefs.setBool("isLoggedIn", true);
         await prefs.setString("role", "driver");
@@ -279,37 +281,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
                         ),
 
                         const SizedBox(height: 18),
-
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Text(
-                              "New here? ",
-                              style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.black54),
-                            ),
-                            GestureDetector(
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                    const DriverSignupPage(),
-                                  ),
-                                );
-                              },
-                              child: const Text(
-                                "Create an account",
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Color(0xFF00C9A7),
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
                       ],
                     ),
                   ),

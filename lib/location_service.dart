@@ -4,16 +4,13 @@ import 'package:firebase_database/firebase_database.dart';
 
 class LocationService {
   static StreamSubscription<Position>? _positionStream;
-
-  /// START tracking (called when Trip starts)
+//========================= START TRACKING =====================================
   static Future<void> startTracking(String busId) async {
-    // 1️⃣ Check GPS
     bool enabled = await Geolocator.isLocationServiceEnabled();
     if (!enabled) {
       return;
     }
 
-    // 2️⃣ Check permission
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
@@ -22,26 +19,24 @@ class LocationService {
       return;
     }
 
-    // 3️⃣ Stop existing stream if any
     await stopTracking();
 
-    // 4️⃣ Start foreground location stream
     _positionStream = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
         distanceFilter: 5,
       ),
     ).listen((position) {
-      FirebaseDatabase.instance.ref("buses/$busId/current").set({
+      FirebaseDatabase.instance.ref("buses/$busId").update({
         "lat": position.latitude,
         "lng": position.longitude,
-        "speed": position.speed * 3.6, // km/h
+        "bearing": position.heading,
         "updatedAt": ServerValue.timestamp,
       });
     });
   }
 
-  /// STOP tracking (called when Trip ends)
+//========================= STOP TRACKING =====================================
   static Future<void> stopTracking() async {
     await _positionStream?.cancel();
     _positionStream = null;
