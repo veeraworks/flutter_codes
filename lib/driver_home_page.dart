@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_database/firebase_database.dart';
@@ -38,7 +39,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
   String? tempBusNumber;
   String? tempRouteName;
 
-
+  Timer? _gpsCheckTimer;
   bool gpsOn = false;
   bool internetOn = false;
   bool locationSyncOn = false;
@@ -60,12 +61,17 @@ class _DriverHomePageState extends State<DriverHomePage> {
   final List<LatLng> _routePoints = [];
   Set<Polyline> _polylines = {};
 
-
   @override
   void initState() {
     super.initState();
     _refreshDriverProfile();
     _initialize();
+
+    _gpsCheckTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (tripStarted) {
+        _checkStatuses();
+      }
+    });
   }
 
   Future<void> _initialize() async {
@@ -75,8 +81,11 @@ class _DriverHomePageState extends State<DriverHomePage> {
     await _loadBusId();
     final wasTracking = prefs.getBool("trackingActive") ?? false;
     final savedTripId = prefs.getString("activeTripId");
-
     if (wasTracking && savedTripId != null) {
+
+      await _loadBusInfo();
+      await _listenToTemporaryBus();
+
       setState(() {
         tripStarted = true;
         currentTripId = savedTripId;
@@ -98,9 +107,9 @@ class _DriverHomePageState extends State<DriverHomePage> {
   void dispose() {
     positionStream?.cancel();
     _tempBusListener?.cancel();
+    _gpsCheckTimer?.cancel();
     super.dispose();
   }
-
   // ================= LOAD BUS ID ====================================
   Future<void> _loadBusId() async {
     final prefs = await SharedPreferences.getInstance();
@@ -315,6 +324,10 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
       setState(() {
         tripStarted = true;
+        FlutterBackgroundService().startService();
+        FlutterBackgroundService().invoke("setBusId", {
+          "busId": busId
+        });
         tripMode = mode;
       });
       final prefs = await SharedPreferences.getInstance();
@@ -358,7 +371,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     );
 
     await positionStream?.cancel();
-
+    FlutterBackgroundService().invoke("stopService");
     setState(() {
       tripStarted = false;
       currentTripId = null;
