@@ -17,8 +17,10 @@ final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 FlutterLocalNotificationsPlugin();
 
 /// 🔥 BACKGROUND HANDLER
+@pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(
     RemoteMessage message) async {
+
   await Firebase.initializeApp();
 
   final prefs = await SharedPreferences.getInstance();
@@ -26,16 +28,22 @@ Future<void> _firebaseMessagingBackgroundHandler(
 
   if (regNo == null) return;
 
+  final title =
+      message.data['title'] ??
+          message.notification?.title ??
+          "Notification";
+
+  final body =
+      message.data['body'] ??
+          message.notification?.body ??
+          "";
+
   await FirebaseDatabase.instance
       .ref("notifications/$regNo")
       .push()
       .set({
-    "title": message.data['title'] ??
-        message.notification?.title ??
-        "",
-    "body": message.data['body'] ??
-        message.notification?.body ??
-        "",
+    "title": title,
+    "body": body,
     "timestamp": ServerValue.timestamp,
     "read": false,
   });
@@ -48,16 +56,22 @@ Future<void> saveNotification(RemoteMessage message) async {
 
   if (regNo == null) return;
 
+  final title =
+      message.data['title'] ??
+          message.notification?.title ??
+          "Notification";
+
+  final body =
+      message.data['body'] ??
+          message.notification?.body ??
+          "";
+
   await FirebaseDatabase.instance
       .ref("notifications/$regNo")
       .push()
       .set({
-    "title": message.data['title'] ??
-        message.notification?.title ??
-        "",
-    "body": message.data['body'] ??
-        message.notification?.body ??
-        "",
+    "title": title,
+    "body": body,
     "timestamp": ServerValue.timestamp,
     "read": false,
   });
@@ -70,6 +84,16 @@ Future<void> handleInitialMessage() async {
 
   if (initialMessage != null) {
     await saveNotification(initialMessage);
+
+    final type = initialMessage.data['type'];
+
+    if (type == "ISSUE") {
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (_) => const DriverHomePage(),
+        ),
+      );
+    }
   }
 }
 
@@ -133,6 +157,16 @@ Future<void> main() async {
   FirebaseMessaging.onMessageOpenedApp
       .listen((RemoteMessage message) async {
     await saveNotification(message);
+
+    final type = message.data['type'];
+
+    if (type == "ISSUE") {
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (_) => const DriverHomePage(),
+        ),
+      );
+    }
   });
 
   runApp(const MyApp());

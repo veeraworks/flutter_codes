@@ -544,58 +544,34 @@ class _DriverHomePageState extends State<DriverHomePage> {
               ],
             ),
           ),
-
           const SizedBox(height: 20),
 
+// 1️⃣ BUS INFORMATION CARD
           _infoCard(
             title: 'Bus Information',
             children: [
-              // show permanent values as before
-              _infoRow(
-                'Route',
-                isTempBusActive ? "$permRouteName (Original)" : permRouteName,
-              ),
-
-              _infoRow(
-                'Bus Number',
-                isTempBusActive ? "$permBusNumber (Original)" : permBusNumber,
-              ),
+              _infoRow('Route', permRouteName),
+              _infoRow('Bus Number', permBusNumber),
               _infoRow('Shift', shift),
-
-              // show temporary details only under this card (do not replace permanent display)
-              if (isTempBusActive)
-                Container(
-                  width: double.infinity,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade100,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.orange),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.warning_amber_rounded,
-                          color: Colors.orange),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          "Temporary Bus Active\n"
-                              "Bus: ${tempBusNumber ?? "-"}\n"
-                              "Route: ${tempRouteName ?? "-"}",
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: Colors.black87,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
             ],
           ),
+
           const SizedBox(height: 16),
 
+// 2️⃣ TEMPORARY CARD (SEPARATE — NOT INSIDE)
+          if (isTempBusActive)
+            _infoCard(
+              title: "Temporary Bus Active",
+              titleColor: Colors.orange,
+              children: [
+                _infoRow("Temporary Bus", tempBusNumber ?? "-"),
+                _infoRow("Temporary Route", tempRouteName ?? "-"),
+              ],
+            ),
+
+          const SizedBox(height: 16),
+
+// 3️⃣ LOCATION STATUS
           _infoCard(
             title: 'Location Status',
             children: [
@@ -647,7 +623,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
                                     currentLatLng: _currentLatLng,
                                     marker: _driverMarker,
 
-                                    // 🔴 THIS LINE IS MANDATORY
                                     routePoints: List.from(_routePoints),
                                   ),
                                 ),
@@ -738,6 +713,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
   Widget _infoCard({
     required String title,
     required List<Widget> children,
+    Color titleColor = Colors.black,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -750,9 +726,14 @@ class _DriverHomePageState extends State<DriverHomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title,
-                style: const TextStyle(
-                    fontSize: 18, fontWeight: FontWeight.w600)),
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: titleColor,
+              ),
+            ),
             const SizedBox(height: 12),
             ...children,
           ],
