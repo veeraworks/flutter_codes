@@ -50,12 +50,11 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
     // 2️⃣ Call backend to send notification
     try {
       await http.post(
-        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/notify-route"),
+        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/report-issue"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
-          "route": routeName,
-          "title": "Bus Issue Alert",
-          "body": "$issue reported on your route.",
+          "busId": busId,
+          "issueType": issue,
         }),
       );
     } catch (e) {

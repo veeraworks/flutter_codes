@@ -64,7 +64,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
   @override
   void initState() {
     super.initState();
-    _refreshDriverProfile();
     _initialize();
 
     _gpsCheckTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
@@ -77,15 +76,15 @@ class _DriverHomePageState extends State<DriverHomePage> {
   Future<void> _initialize() async {
     final prefs = await SharedPreferences.getInstance();
 
-
     await _loadBusId();
+    await _refreshDriverProfile();
+    await _loadBusInfo();
+    await _listenToTemporaryBus();
+
     final wasTracking = prefs.getBool("trackingActive") ?? false;
     final savedTripId = prefs.getString("activeTripId");
+
     if (wasTracking && savedTripId != null) {
-
-      await _loadBusInfo();
-      await _listenToTemporaryBus();
-
       setState(() {
         tripStarted = true;
         currentTripId = savedTripId;
@@ -94,9 +93,8 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
       _startLocationUpdates();
     }
-    await _loadBusInfo();
+
     await _checkStatuses();
-    await _listenToTemporaryBus();
 
     setState(() {
       _initialized = true;
@@ -390,23 +388,27 @@ class _DriverHomePageState extends State<DriverHomePage> {
     if (phone == null) return;
 
     final response = await http.get(
-      Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/profile?phone=$phone"),
+      Uri.parse(
+          "https://null-sheldon-unstudded.ngrok-free.dev/drivers/profile?phone=$phone"),
     );
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
 
-      setState(() {
-        permBusNumber = data["busId"];
-        permRouteName = data["busName"];
-
-        busNumber = permBusNumber;
-        routeName = permRouteName;
-      });
-
+      await prefs.setString("driverName", data["name"]);
+      await prefs.setString("phoneNumber", data["phone"]);
       await prefs.setString("busId", data["busId"]);
       await prefs.setString("busNumber", data["busId"]);
       await prefs.setString("routeName", data["busName"]);
+      await prefs.setString("shift", data["shift"]);
+
+      setState(() {
+        permBusNumber = data["busId"];
+        permRouteName = data["busName"];
+        busId = data["busId"];
+        shift = data["shift"] ?? "-";
+        permBusId = data["busId"];
+      });
     }
   }
 
