@@ -9,7 +9,6 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
 final GlobalKey<NavigatorState> navigatorKey =
 GlobalKey<NavigatorState>();
 
@@ -104,7 +103,7 @@ Future<void> main() async {
     if (type == "ISSUE") {
       navigatorKey.currentState?.push(
         MaterialPageRoute(
-          builder: (_) => const DriverHomePage(),
+          builder: (_) => const NotificationsPage(),  // ✅ CORRECT
         ),
       );
     }

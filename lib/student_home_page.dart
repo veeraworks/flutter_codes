@@ -312,7 +312,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
     if (busId == null) return;
 
     _busListener = FirebaseDatabase.instance
-        .ref("buses/$busId")
+        .ref("buses/$busId/current")
         .onValue
         .listen((event) async {
 
