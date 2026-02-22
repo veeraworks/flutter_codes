@@ -5,9 +5,6 @@ import 'student_home_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'student_otp_page.dart';
 import 'student_signup_page.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'config.dart';
-
 
 class StudentLoginPage extends StatefulWidget {
   const StudentLoginPage({super.key});

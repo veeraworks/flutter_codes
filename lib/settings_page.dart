@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'main.dart';
 import 'help_page.dart';
 import 'student_home_page.dart' hide HelpPage;
@@ -36,11 +37,19 @@ class _SettingsPageState extends State<SettingsPage> {
 
           // ================= ACCOUNT =================
           _sectionTitle("Account"),
+
           _tile(
             Icons.person,
             "Profile",
-            "View and edit your profile",
-                () {},
+            "View your student details",
+                () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const ProfilePage(),
+                ),
+              );
+            },
           ),
 
           const SizedBox(height: 20),
@@ -59,7 +68,8 @@ class _SettingsPageState extends State<SettingsPage> {
               activeColor: primaryColor,
               title: const Text("Notifications"),
               subtitle: const Text("Bus alerts and updates"),
-              secondary: const Icon(Icons.notifications, color: greyIcon),
+              secondary:
+              const Icon(Icons.notifications, color: greyIcon),
             ),
           ),
 
@@ -74,9 +84,11 @@ class _SettingsPageState extends State<SettingsPage> {
             },
           ),
 
+          const SizedBox(height: 20),
 
           // ================= SUPPORT =================
           _sectionTitle("Support"),
+
           _tile(
             Icons.help_outline,
             "Help & Support",
@@ -84,10 +96,12 @@ class _SettingsPageState extends State<SettingsPage> {
                 () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const HelpPage()),
+                MaterialPageRoute(
+                    builder: (_) => const HelpPage()),
               );
             },
           ),
+
           _tile(
             Icons.info_outline,
             "About App",
@@ -95,7 +109,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const AboutApp()),
+                MaterialPageRoute(
+                    builder: (_) => const AboutApp()),
               );
             },
           ),
@@ -104,6 +119,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
           // ================= ACCOUNT ACTIONS =================
           _sectionTitle("Account Actions"),
+
           _tile(
             Icons.logout,
             "Logout",
@@ -158,7 +174,8 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text("Logout"),
-        content: const Text("Are you sure you want to logout?"),
+        content:
+        const Text("Are you sure you want to logout?"),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -183,6 +200,111 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class ProfilePage extends StatefulWidget {
+  const ProfilePage({super.key});
+
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+
+  String? name;
+  String? regNo;
+  String? routeName;
+  String? busId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    setState(() {
+      name = prefs.getString("studentName") ?? "Not Available";
+      regNo = prefs.getString("regNo") ?? "Not Available";
+      routeName = prefs.getString("routeName") ?? "Not Assigned";
+      busId = prefs.getString("busId") ?? "-";
+    });
+  }
+
+  Widget _infoTile(String label, String? value) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment:
+        MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              color: Colors.black54,
+            ),
+          ),
+          Text(
+            value ?? "-",
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF6F3F7),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF00BFA6),
+        title: const Text(
+          "My Profile",
+          style: TextStyle(color: Colors.white),
+        ),
+        iconTheme:
+        const IconThemeData(color: Colors.white),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+
+            const CircleAvatar(
+              radius: 45,
+              backgroundColor: Color(0xFF00BFA6),
+              child: Icon(Icons.person,
+                  size: 50, color: Colors.white),
+            ),
+
+            const SizedBox(height: 24),
+
+            _infoTile("Name", name),
+            _infoTile("Register No", regNo),
+            _infoTile("Route", routeName),
+            _infoTile("Bus ID", busId),
+          ],
+        ),
       ),
     );
   }

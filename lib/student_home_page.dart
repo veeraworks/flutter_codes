@@ -25,6 +25,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
   String? displayRoute;
   String? activeIssue;
   String? tempBus;
+  String? busId;
   StreamSubscription<DatabaseEvent>? _issueListener;
   StreamSubscription<DatabaseEvent>? _tempBusListener;
   StreamSubscription<DatabaseEvent>? _busListener;
@@ -43,38 +44,26 @@ class _StudentHomePageState extends State<StudentHomePage> {
   @override
   void initState() {
     super.initState();
+
     _refreshStudentProfile();
     _requestPermission();
     _listenForMessages();
-    _loadStudentInfo();
-    _subscribeToRoute();
-    _saveFcmToken();
+
+    _loadStudentInfo().then((_) async {
+      print(" Student Bus ID: $busId");
+
+      if (busId != null) {
+        print(" Subscribing to topic: ${busId!.toLowerCase()}");
+        await _subscribeToRoute();
+      } else {
+        print(" busId still NULL after loading!");
+      }
+    });
+
     _listenToNotifications();
     _listenToBusIssues();
     _listenToBus();
     _listenToTemporaryBus();
-    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) async {
-
-      final prefs = await SharedPreferences.getInstance();
-      final regNo = prefs.getString("regNo");
-
-      if (regNo == null) return;
-
-      await FirebaseDatabase.instance
-          .ref("notifications/$regNo")
-          .push()
-          .set({
-        "title": message.data['title'] ??
-            message.notification?.title ??
-            "Notification",
-
-        "body": message.data['body'] ??
-            message.notification?.body ??
-            "",
-        "timestamp": ServerValue.timestamp,
-        "read": false,
-      });
-    });
   }
 
   @override
@@ -92,47 +81,57 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
     if (regNo == null) return;
 
+    final oldBusId = prefs.getString("busId"); // 🔥 Get old bus
+
     final response = await http.get(
       Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/profile?regNo=$regNo"),
     );
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
+      final newBusId = data["busId"];
 
-      String oldBusId = prefs.getString("busId") ?? "";
+      // 🔥 If bus changed → unsubscribe old topic
+      if (oldBusId != null && oldBusId != newBusId) {
+        await FirebaseMessaging.instance
+            .unsubscribeFromTopic(oldBusId.toLowerCase());
+      }
+
+      // 🔥 Subscribe new topic
+      await FirebaseMessaging.instance
+          .subscribeToTopic(newBusId.toLowerCase());
+
+      await prefs.setString("busId", newBusId);
+      await prefs.setString("routeName", data["busName"]);
+      await prefs.setString("studentName", data["name"]);
 
       setState(() {
         studentName = data["name"];
         routeName = data["busName"];
         displayRoute = data["busName"];
+        busId = newBusId;
       });
-
-      await prefs.setString("busId", data["busId"]);
-      await prefs.setString("routeName", data["busName"]);
-      await prefs.setString("studentName", data["name"]); // ✅ correct
-
-      // 🔥 If bus changed → update topic
-      if (oldBusId != data["busId"]) {
-        await FirebaseMessaging.instance
-            .unsubscribeFromTopic(oldBusId.toLowerCase());
-
-        await FirebaseMessaging.instance
-            .subscribeToTopic(data["busId"].toLowerCase());
-      }
     }
   }
+
   Future<void> _subscribeToRoute() async {
     final prefs = await SharedPreferences.getInstance();
     final busId = prefs.getString("busId");
 
     if (busId != null && busId.isNotEmpty) {
+
+      print("🔥 Subscribing NOW to topic: ${busId.toLowerCase()}");
+
       await FirebaseMessaging.instance
           .subscribeToTopic(busId.toLowerCase());
 
-      print("✅ Subscribed to bus topic: ${busId.toLowerCase()}");
+      print("✅ Subscribed successfully!");
+    } else {
+      print("❌ busId is NULL or empty!");
     }
+
     String? token = await FirebaseMessaging.instance.getToken();
-    print("FCM TOKEN: $token");
+    print("🔥 FCM TOKEN: $token");
   }
 
   Future<void> _requestPermission() async {
@@ -167,18 +166,6 @@ class _StudentHomePageState extends State<StudentHomePage> {
               message.notification?.body ??
               "";
 
-      // 🔥 SAVE TO FIREBASE
-      await FirebaseDatabase.instance
-          .ref("notifications/$regNo")
-          .push()
-          .set({
-        "title": title,
-        "body": body,
-        "timestamp": ServerValue.timestamp,
-        "read": false,
-      });
-
-
       // Snackbar (foreground only)
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -188,20 +175,6 @@ class _StudentHomePageState extends State<StudentHomePage> {
     });
   }
 
-  Future<void> _saveFcmToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    final routeName = prefs.getString("routeName");
-
-    if (routeName == null) return;
-
-    String? token = await FirebaseMessaging.instance.getToken();
-
-    if (token != null) {
-      await FirebaseDatabase.instance
-          .ref("routeTokens/$routeName/$token")
-          .set(true);
-    }
-  }
   Future<void> _listenToNotifications() async {
     final prefs = await SharedPreferences.getInstance();
     final regNo = prefs.getString("regNo");  // ✅ FIXED
@@ -348,6 +321,12 @@ class _StudentHomePageState extends State<StudentHomePage> {
       if (data == null) return;
 
       final map = Map<String, dynamic>.from(data as Map);
+      if (!map.containsKey("lat") || !map.containsKey("lng")) {
+        setState(() {
+          _etaMinutes = null;   // No trip → No ETA
+        });
+        return;
+      }
 
       double lat = map["lat"];
       double lng = map["lng"];

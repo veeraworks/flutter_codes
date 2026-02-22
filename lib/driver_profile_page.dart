@@ -107,6 +107,4 @@ class _ProfileRow extends StatelessWidget {
       ),
     );
   }
-
-
 }
