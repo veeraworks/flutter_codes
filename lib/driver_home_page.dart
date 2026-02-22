@@ -38,6 +38,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
   String permRouteName = "-";
   String? tempBusNumber;
   String? tempRouteName;
+  double _lastSpeed = 0;
 
   Timer? _gpsCheckTimer;
   bool gpsOn = false;
@@ -91,6 +92,13 @@ class _DriverHomePageState extends State<DriverHomePage> {
         tripMode = prefs.getString("tripMode");
       });
 
+      if (tripStarted && busId != null) {
+        FlutterBackgroundService().startService();
+        FlutterBackgroundService().invoke("setBusId", {
+          "busId": busId
+        });
+      }
+
       _startLocationUpdates();
     }
 
@@ -142,37 +150,67 @@ class _DriverHomePageState extends State<DriverHomePage> {
     final permId = prefs.getString("busId");
     if (permId == null) return;
 
+    _tempBusListener?.cancel();
+
     _tempBusListener = FirebaseDatabase.instance
-        .ref("temporaryBusChanges/$permId")
+        .ref("temporaryBusChanges/${permId.toUpperCase()}")
         .onValue
-        .listen((event) {
+        .listen((event) async {
 
       final data = event.snapshot.value as Map?;
 
+      // ================= ACTIVE =================
       if (data != null && data["status"] == "ACTIVE") {
+
+        final String? newBus = data["newBus"];
+        final String? newRoute = data["tempRoute"];
+
+        if (newBus == null) return;
 
         setState(() {
           isTempBusActive = true;
-          tempBusNumber = data["newBus"];
-          tempRouteName = data["tempRoute"];
-
-          // ✅ VERY IMPORTANT
-          busId = data["newBus"];
+          tempBusNumber = newBus;
+          tempRouteName = newRoute;
+          busId = newBus;
         });
 
-      } else {
+        // 🔥 SAVE TEMP STATE
+        await prefs.setBool("isTempBusActive", true);
+        await prefs.setString("tempBusNumber", newBus);
+        await prefs.setString("tempRouteName", newRoute ?? "");
+
+        // 🔥 UPDATE BACKGROUND SERVICE
+        if (tripStarted) {
+          FlutterBackgroundService().invoke("setBusId", {
+            "busId": busId,
+          });
+        }
+      }
+
+      // ================= CLEAR =================
+      else {
 
         setState(() {
           isTempBusActive = false;
           tempBusNumber = null;
           tempRouteName = null;
-
           busId = permBusId;
         });
+
+        // 🔥 CLEAR SAVED TEMP STATE
+        await prefs.setBool("isTempBusActive", false);
+        await prefs.remove("tempBusNumber");
+        await prefs.remove("tempRouteName");
+
+        // 🔥 UPDATE BACKGROUND SERVICE
+        if (tripStarted) {
+          FlutterBackgroundService().invoke("setBusId", {
+            "busId": busId,
+          });
+        }
       }
     });
   }
-
   // ---------------- CHECK GPS / INTERNET ---------------------------------------
   Future<void> _checkStatuses() async {
     final gpsEnabled = await Geolocator.isLocationServiceEnabled();
@@ -206,11 +244,13 @@ class _DriverHomePageState extends State<DriverHomePage> {
       print("GPS SERVICE DISABLED");
       return;
     }
+
     LocationPermission permission = await Geolocator.checkPermission();
 
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
+
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
       print("LOCATION PERMISSION DENIED");
@@ -225,15 +265,36 @@ class _DriverHomePageState extends State<DriverHomePage> {
         distanceFilter: 5,
       ),
     ).listen((position) {
-      print("GPS UPDATE → ${position.latitude}, ${position.longitude}");
 
-    if (!tripStarted) {
-      print("GPS running but trip not started");
-      return;
-    }
+      print("GPS UPDATE → ${position.latitude}, ${position.longitude}");
+      print("RAW SPEED → ${position.speed} m/s");
+
+      if (!tripStarted) {
+        print("GPS running but trip not started");
+        return;
+      }
 
       final latLng = LatLng(position.latitude, position.longitude);
 
+      // ================= SPEED STABILIZATION =================
+      double realSpeed = position.speed;
+
+      // Remove tiny GPS noise
+      if (realSpeed < 0.5) {
+        realSpeed = 0;
+      }
+
+      // Apply exponential smoothing (70% previous + 30% new)
+      realSpeed = (_lastSpeed * 0.7) + (realSpeed * 0.3);
+
+      // Round to 1 decimal place
+      realSpeed = double.parse(realSpeed.toStringAsFixed(1));
+
+      _lastSpeed = realSpeed;
+
+      print("SMOOTHED SPEED → $realSpeed m/s");
+
+      // ================= UI UPDATE =================
       setState(() {
         _currentLatLng = latLng;
 
@@ -245,18 +306,17 @@ class _DriverHomePageState extends State<DriverHomePage> {
           ),
         );
 
-        _routePoints.add(latLng);
-        print("Route points now = ${_routePoints.length}");
+        if (_routePoints.isEmpty ||
+            Geolocator.distanceBetween(
+              _routePoints.last.latitude,
+              _routePoints.last.longitude,
+              latLng.latitude,
+              latLng.longitude,
+            ) > 5) {
 
-        _polylines.clear();
-        _polylines.add(
-          Polyline(
-            polylineId: const PolylineId("route"),
-            points: _routePoints,
-            color: Colors.blue,
-            width: 5,
-          ),
-        );
+          _routePoints.add(latLng);
+        }
+
         _polylines = {
           Polyline(
             polylineId: const PolylineId("route"),
@@ -274,13 +334,13 @@ class _DriverHomePageState extends State<DriverHomePage> {
         CameraUpdate.newLatLng(latLng),
       );
 
-      // Update Firebase only if busId exists (non-blocking)
-      // Update Firebase only if busId exists AND internet is ON
+      // ================= FIREBASE UPDATE =================
       if (busId != null && internetOn) {
         FirebaseDatabase.instance.ref("buses/$busId/current").update({
           "lat": position.latitude,
           "lng": position.longitude,
           "bearing": position.heading,
+          "speed": realSpeed, // 🔥 stable speed
           "updatedAt": ServerValue.timestamp,
         }).catchError((e) {
           print("Failed to update bus location: $e");
