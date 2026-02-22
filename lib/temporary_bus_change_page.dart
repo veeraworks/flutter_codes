@@ -91,7 +91,7 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
 
       // ✅ UPDATE FIREBASE REALTIME DB
       await FirebaseDatabase.instance
-          .ref("temporaryBusChanges/$busId")
+          .ref("temporaryBusChanges/${busId.toUpperCase()}")
           .set({
         "newBus": newBus,
         "tempRoute": selectedRoute,
@@ -104,9 +104,9 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
         Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/temporary-bus"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
-          "busId": busId,
-          "newBus": newBus,
-          "status": "ACTIVE",
+            "busId": busId,
+            "tempBusNumber": newBus,
+            "active": true,
         }),
       );
 
@@ -159,7 +159,7 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
 
       // ✅ UPDATE FIREBASE
       await FirebaseDatabase.instance
-          .ref("temporaryBusChanges/$busId")
+          .ref("temporaryBusChanges/${busId.toUpperCase()}")
           .update({
         "newBus": null,
         "tempRoute": null,
@@ -172,9 +172,9 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
         Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/temporary-bus"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
-      "busId": busId,
-      "status": "CLEARED",
-       }),
+          "busId": busId,
+          "active": false,
+        }),
       );
 
       setState(() {
