@@ -81,8 +81,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
     if (regNo == null) return;
 
-    final oldBusId = prefs.getString("busId"); // 🔥 Get old bus
-
+    final oldBusId = prefs.getString("busId");
     final response = await http.get(
       Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/profile?regNo=$regNo"),
     );
@@ -252,12 +251,17 @@ class _StudentHomePageState extends State<StudentHomePage> {
   //=================Temporary Bus Change Listener==================
   Future<void> _listenToTemporaryBus() async {
     final prefs = await SharedPreferences.getInstance();
-    final busId = prefs.getString("busId");
+    final String? originalBusId = prefs.getString("busId");
 
-    if (busId == null) return;
+    if (originalBusId == null) {
+      print("❌ busId is NULL — cannot listen to temp bus");
+      return;
+    }
+
+    print("👂 Listening to temporaryBusChanges/${originalBusId.toUpperCase()}");
 
     _tempBusListener = FirebaseDatabase.instance
-        .ref("temporaryBusChanges/$busId")
+        .ref("temporaryBusChanges/${originalBusId.toUpperCase()}")
         .onValue
         .listen((event) async {
 
@@ -268,10 +272,15 @@ class _StudentHomePageState extends State<StudentHomePage> {
         final String? newBus = data["newBus"];
         final String? tempRoute = data["tempRoute"];
 
-        // 🔥 SWITCH TOPIC
-        await FirebaseMessaging.instance
-            .unsubscribeFromTopic(busId.toLowerCase());
+        print("🚍 TEMP BUS ACTIVE");
+        print("Unsubscribing from: ${originalBusId.toLowerCase()}");
+        print("Subscribing to temp bus: ${newBus?.toLowerCase()}");
 
+        // 🔥 Unsubscribe from original topic
+        await FirebaseMessaging.instance
+            .unsubscribeFromTopic(originalBusId.toLowerCase());
+
+        // 🔥 Subscribe to temporary topic
         if (newBus != null) {
           await FirebaseMessaging.instance
               .subscribeToTopic(newBus.toLowerCase());
@@ -284,18 +293,19 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
       } else {
 
-        final originalBus = prefs.getString("busId");
+        print("🔄 TEMP BUS CLEARED");
 
-        // 🔥 RESTORE TOPIC
+        // 🔥 Unsubscribe from temp topic
         if (tempBus != null) {
+          print("Unsubscribing from temp bus: ${tempBus!.toLowerCase()}");
           await FirebaseMessaging.instance
               .unsubscribeFromTopic(tempBus!.toLowerCase());
         }
 
-        if (originalBus != null) {
-          await FirebaseMessaging.instance
-              .subscribeToTopic(originalBus.toLowerCase());
-        }
+        // 🔥 Subscribe back to original topic
+        print("Subscribing back to: ${originalBusId.toLowerCase()}");
+        await FirebaseMessaging.instance
+            .subscribeToTopic(originalBusId.toLowerCase());
 
         setState(() {
           tempBus = null;
@@ -317,8 +327,13 @@ class _StudentHomePageState extends State<StudentHomePage> {
         .listen((event) async {
 
       final data = event.snapshot.value;
-      if (data == null) return;
 
+      if (data == null) {
+        setState(() {
+          _etaMinutes = null;
+        });
+        return;
+      }
       final map = Map<String, dynamic>.from(data as Map);
       if (!map.containsKey("lat") || !map.containsKey("lng")) {
         setState(() {

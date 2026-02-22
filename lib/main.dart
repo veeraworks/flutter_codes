@@ -30,10 +30,10 @@ Future<void> handleInitialMessage() async {
 
     final type = initialMessage.data['type'];
 
-    if (type == "ISSUE") {
+    if (type == "ISSUE" || type == "TEMP_BUS") {
       navigatorKey.currentState?.push(
         MaterialPageRoute(
-          builder: (_) => const DriverHomePage(),
+          builder: (_) => const NotificationsPage(),
         ),
       );
     }
@@ -100,10 +100,10 @@ Future<void> main() async {
       .listen((RemoteMessage message) async {
     final type = message.data['type'];
 
-    if (type == "ISSUE") {
+    if (type == "ISSUE" || type == "TEMP_BUS") {
       navigatorKey.currentState?.push(
         MaterialPageRoute(
-          builder: (_) => const NotificationsPage(),  // ✅ CORRECT
+          builder: (_) => const NotificationsPage(),
         ),
       );
     }
