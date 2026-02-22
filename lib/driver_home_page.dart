@@ -277,7 +277,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
       // Update Firebase only if busId exists (non-blocking)
       // Update Firebase only if busId exists AND internet is ON
       if (busId != null && internetOn) {
-        FirebaseDatabase.instance.ref("buses/$busId").update({
+        FirebaseDatabase.instance.ref("buses/$busId/current").update({
           "lat": position.latitude,
           "lng": position.longitude,
           "bearing": position.heading,
