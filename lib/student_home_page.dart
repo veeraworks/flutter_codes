@@ -30,12 +30,14 @@ class _StudentHomePageState extends State<StudentHomePage> {
   StreamSubscription<DatabaseEvent>? _tempBusListener;
   StreamSubscription<DatabaseEvent>? _busListener;
   String lastUpdatedText = "Just now";
+  DateTime? _lastMovingTime;
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   int _currentIndex = 0;
   double? _etaMinutes;
-
+  Position? _studentPosition;
+  Timer? _studentLocationTimer;
   int unreadCount = 0;
   StreamSubscription? _notificationListener;
 
@@ -64,6 +66,24 @@ class _StudentHomePageState extends State<StudentHomePage> {
     _listenToBusIssues();
     _listenToBus();
     _listenToTemporaryBus();
+
+    Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.medium,
+    ).then((pos) {
+      _studentPosition = pos;
+    }).catchError((e) {
+      print("Initial student GPS error: $e");
+    });
+    _studentLocationTimer =
+        Timer.periodic(const Duration(seconds: 20), (_) async {
+          try {
+            _studentPosition = await Geolocator.getCurrentPosition(
+              desiredAccuracy: LocationAccuracy.medium,
+            );
+          } catch (e) {
+            print("Student GPS error: $e");
+          }
+        });
   }
 
   @override
@@ -72,6 +92,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
     _busListener?.cancel();
     _tempBusListener?.cancel();
     _notificationListener?.cancel();
+    _studentLocationTimer?.cancel();
     super.dispose();
   }
 
@@ -291,6 +312,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
           displayRoute = tempRoute ?? routeName;
         });
 
+        await _listenToBus();
       } else {
 
         print("🔄 TEMP BUS CLEARED");
@@ -311,20 +333,24 @@ class _StudentHomePageState extends State<StudentHomePage> {
           tempBus = null;
           displayRoute = routeName;
         });
+        await _listenToBus();
       }
     });
   }
-
   Future<void> _listenToBus() async {
     final prefs = await SharedPreferences.getInstance();
-    String? busId = prefs.getString("busId");
 
-    if (busId == null) return;
+    String? originalBus = prefs.getString("busId");
+    String? currentBus = tempBus ?? originalBus;
+
+    if (currentBus == null) return;
+
+    _busListener?.cancel();
 
     _busListener = FirebaseDatabase.instance
-        .ref("buses/$busId/current")
+        .ref("buses/$currentBus/current")
         .onValue
-        .listen((event) async {
+        .listen((event) {
 
       final data = event.snapshot.value;
 
@@ -334,55 +360,100 @@ class _StudentHomePageState extends State<StudentHomePage> {
         });
         return;
       }
+
       final map = Map<String, dynamic>.from(data as Map);
+
       if (!map.containsKey("lat") || !map.containsKey("lng")) {
         setState(() {
-          _etaMinutes = null;   // No trip → No ETA
+          _etaMinutes = null;
         });
         return;
       }
 
+      // 🔥 USE CACHED STUDENT POSITION (battery friendly)
+      if (_studentPosition == null) return;
+
       double lat = map["lat"];
       double lng = map["lng"];
-
-      // Get student location
-      Position position = await Geolocator.getCurrentPosition();
 
       double distance = Geolocator.distanceBetween(
         lat,
         lng,
-        position.latitude,
-        position.longitude,
+        _studentPosition!.latitude,
+        _studentPosition!.longitude,
       );
 
-      if (distance < 50) {
+      // ================= ARRIVAL LOGIC =================
+
+      // ✅ ARRIVED (within 30 meters)
+      if (distance < 30) {
         setState(() {
           _etaMinutes = 0;
         });
-      } else if (distance < 300) {
+        return;
+      }
+
+      // ✅ NEARBY (30m – 200m)
+      if (distance >= 30 && distance < 200) {
         setState(() {
           _etaMinutes = -1;
         });
-      } else {
-        double speed = 30 * 1000 / 3600;
-        double time = distance / speed;
-
-        setState(() {
-          _etaMinutes = (time / 60).ceilToDouble();
-        });
+        return;
       }
+
+      // ================= SPEED LOGIC =================
+
+      double speed = (map["speed"] ?? 0).toDouble();
+
+      // Track last moving time
+      if (speed > 1.5) {
+        _lastMovingTime = DateTime.now();
+      }
+
+      // If very slow → assume traffic speed
+      if (speed > 0 && speed < 1.5) {
+        speed = 3.0; // ~10 km/h
+      }
+
+      // If stopped
+      if (speed <= 0) {
+        if (_lastMovingTime != null &&
+            DateTime.now().difference(_lastMovingTime!).inSeconds < 20) {
+          // Recently moving → temporary stop (signal)
+          speed = 3.0;
+        } else {
+          // Fully stopped
+          setState(() {
+            _etaMinutes = null;
+          });
+          return;
+        }
+      }
+
+      // ================= ETA CALCULATION =================
+
+      double timeInSeconds = distance / speed;
+      double timeInMinutes = timeInSeconds / 60;
+
+      setState(() {
+        _etaMinutes = timeInMinutes.ceilToDouble();
+      });
     });
   }
 
   //ISSUE REPORTING BY BUS ALERT
   Future<void> _listenToBusIssues() async {
     final prefs = await SharedPreferences.getInstance();
-    final busId = prefs.getString("busId");
 
-    if (busId == null) return;
+    final originalBus = prefs.getString("busId");
+    final currentBus = tempBus ?? originalBus;
+
+    if (currentBus == null) return;
+
+    _issueListener?.cancel();
 
     _issueListener = FirebaseDatabase.instance
-        .ref("busIssues/$busId")
+        .ref("busIssues/$currentBus")
         .onValue
         .listen((event) {
 
