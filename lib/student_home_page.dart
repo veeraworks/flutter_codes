@@ -393,6 +393,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
         return;
       }
 
+
       // ✅ NEARBY (30m – 200m)
       if (distance >= 30 && distance < 200) {
         setState(() {
