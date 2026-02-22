@@ -177,12 +177,11 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
   Future<void> _listenToNotifications() async {
     final prefs = await SharedPreferences.getInstance();
-    final regNo = prefs.getString("regNo");  // ✅ FIXED
-
+    final regNo = prefs.getString("regNo");
     if (regNo == null) return;
 
     _notificationListener = FirebaseDatabase.instance
-        .ref("notifications/$regNo")   // ✅ FIXED
+        .ref("notifications/$regNo")
         .onValue
         .listen((event) {
 
@@ -852,15 +851,32 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
   Future<void> _initialize() async {
     await _loadRegNo();
-    await _markAllAsRead();
+
+    if (regNo != null) {
+      await _markAllAsRead();
+    }
   }
 
   Future<void> _loadRegNo() async {
     final prefs = await SharedPreferences.getInstance();
+    final savedRegNo = prefs.getString("regNo");
+
+    print("REGNO FROM PREFS = $savedRegNo");
+
+    if (savedRegNo == null) {
+      Future.delayed(Duration.zero, () {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const WelcomePage()),
+              (route) => false,
+        );
+      });
+      return;
+    }
+
     setState(() {
-      regNo = prefs.getString("regNo");
+      regNo = savedRegNo;
     });
-    print("REGNO FROM PREFS = $regNo");
   }
 
   Future<void> _markAllAsRead() async {
@@ -916,7 +932,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
       body: StreamBuilder(
         stream: FirebaseDatabase.instance
             .ref("notifications/$regNo")
-            .orderByChild("timestamp")
             .onValue,
         builder: (context, snapshot) {
           if (!snapshot.hasData || snapshot.data!.snapshot.value == null) {

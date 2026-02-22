@@ -20,70 +20,14 @@ FlutterLocalNotificationsPlugin();
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(
     RemoteMessage message) async {
-
   await Firebase.initializeApp();
-
-  final prefs = await SharedPreferences.getInstance();
-  final regNo = prefs.getString("regNo");
-
-  if (regNo == null) return;
-
-  final title =
-      message.data['title'] ??
-          message.notification?.title ??
-          "Notification";
-
-  final body =
-      message.data['body'] ??
-          message.notification?.body ??
-          "";
-
-  await FirebaseDatabase.instance
-      .ref("notifications/$regNo")
-      .push()
-      .set({
-    "title": title,
-    "body": body,
-    "timestamp": ServerValue.timestamp,
-    "read": false,
-  });
 }
-
-/// 🔥 SAVE NOTIFICATION
-Future<void> saveNotification(RemoteMessage message) async {
-  final prefs = await SharedPreferences.getInstance();
-  final regNo = prefs.getString("regNo");
-
-  if (regNo == null) return;
-
-  final title =
-      message.data['title'] ??
-          message.notification?.title ??
-          "Notification";
-
-  final body =
-      message.data['body'] ??
-          message.notification?.body ??
-          "";
-
-  await FirebaseDatabase.instance
-      .ref("notifications/$regNo")
-      .push()
-      .set({
-    "title": title,
-    "body": body,
-    "timestamp": ServerValue.timestamp,
-    "read": false,
-  });
-}
-
 /// 🔥 HANDLE KILLED STATE
 Future<void> handleInitialMessage() async {
   RemoteMessage? initialMessage =
   await FirebaseMessaging.instance.getInitialMessage();
 
   if (initialMessage != null) {
-    await saveNotification(initialMessage);
 
     final type = initialMessage.data['type'];
 
@@ -134,7 +78,6 @@ Future<void> main() async {
 
   /// 🔥 FOREGROUND LISTENER
   FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
-    await saveNotification(message);
 
     if (message.notification != null) {
       await flutterLocalNotificationsPlugin.show(
@@ -156,8 +99,6 @@ Future<void> main() async {
   /// 🔥 CLICK HANDLER
   FirebaseMessaging.onMessageOpenedApp
       .listen((RemoteMessage message) async {
-    await saveNotification(message);
-
     final type = message.data['type'];
 
     if (type == "ISSUE") {
