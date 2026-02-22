@@ -3,90 +3,171 @@ import 'package:project_spt/student_login_page.dart';
 import 'driver_login_page.dart';
 import 'driver_home_page.dart';
 import 'student_home_page.dart';
-
-
-import 'package:firebase_auth/firebase_auth.dart';
+import 'background_location_service.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 final GlobalKey<NavigatorState> navigatorKey =
 GlobalKey<NavigatorState>();
 
-/// 🔥 BACKGROUND HANDLER (MUST BE TOP LEVEL)
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+FlutterLocalNotificationsPlugin();
+
+/// 🔥 BACKGROUND HANDLER
+@pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(
     RemoteMessage message) async {
-  await Firebase.initializeApp();
-  print("🔔 Background message received");
-}
-Future<void> saveNotification(RemoteMessage message) async {
-  final user = FirebaseAuth.instance.currentUser;
 
-  if (user == null) {
-    print("⚠ No logged in user, notification not saved");
-    return;
-  }
+  await Firebase.initializeApp();
+
+  final prefs = await SharedPreferences.getInstance();
+  final regNo = prefs.getString("regNo");
+
+  if (regNo == null) return;
+
+  final title =
+      message.data['title'] ??
+          message.notification?.title ??
+          "Notification";
+
+  final body =
+      message.data['body'] ??
+          message.notification?.body ??
+          "";
 
   await FirebaseDatabase.instance
-      .ref("notifications/${user.uid}")
+      .ref("notifications/$regNo")
       .push()
       .set({
-    "title": message.notification?.title ?? "",
-    "body": message.notification?.body ?? "",
-    "time": ServerValue.timestamp,
+    "title": title,
+    "body": body,
+    "timestamp": ServerValue.timestamp,
     "read": false,
   });
-
-  print("✅ Notification saved in database");
 }
+
+/// 🔥 SAVE NOTIFICATION
+Future<void> saveNotification(RemoteMessage message) async {
+  final prefs = await SharedPreferences.getInstance();
+  final regNo = prefs.getString("regNo");
+
+  if (regNo == null) return;
+
+  final title =
+      message.data['title'] ??
+          message.notification?.title ??
+          "Notification";
+
+  final body =
+      message.data['body'] ??
+          message.notification?.body ??
+          "";
+
+  await FirebaseDatabase.instance
+      .ref("notifications/$regNo")
+      .push()
+      .set({
+    "title": title,
+    "body": body,
+    "timestamp": ServerValue.timestamp,
+    "read": false,
+  });
+}
+
+/// 🔥 HANDLE KILLED STATE
+Future<void> handleInitialMessage() async {
+  RemoteMessage? initialMessage =
+  await FirebaseMessaging.instance.getInitialMessage();
+
+  if (initialMessage != null) {
+    await saveNotification(initialMessage);
+
+    final type = initialMessage.data['type'];
+
+    if (type == "ISSUE") {
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (_) => const DriverHomePage(),
+        ),
+      );
+    }
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
 
-  /// 🔥 REGISTER BACKGROUND HANDLER
+  /// 🔥 Initialize local notifications
+  const AndroidInitializationSettings androidInit =
+  AndroidInitializationSettings('@mipmap/ic_launcher');
+
+  const InitializationSettings initSettings =
+  InitializationSettings(android: androidInit);
+
+  await flutterLocalNotificationsPlugin.initialize(initSettings);
+
+  /// 🔥 Create notification channel
+  const AndroidNotificationChannel channel =
+  AndroidNotificationChannel(
+    'bus_alerts',
+    'Bus Alerts',
+    description: 'Bus issue notifications',
+    importance: Importance.high,
+  );
+
+  await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>()
+      ?.createNotificationChannel(channel);
+
+  await handleInitialMessage();
+  await initializeService();
+
   FirebaseMessaging.onBackgroundMessage(
       _firebaseMessagingBackgroundHandler);
 
-  /// 🔥 REQUEST NOTIFICATION PERMISSION (Android 13+ / iOS)
-  await FirebaseMessaging.instance.requestPermission(
-    alert: true,
-    badge: true,
-    sound: true,
-  );
-
-  /// 🔥 PRINT FCM TOKEN
-  FirebaseMessaging.instance.getToken().then((token) {
-    print("🔥 FCM TOKEN: $token");
-  });
+  await FirebaseMessaging.instance.requestPermission();
 
   /// 🔥 FOREGROUND LISTENER
   FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
-    print("📩 Foreground notification received");
-
-    // ✅ SAVE TO FIREBASE
     await saveNotification(message);
 
-    if (message.notification != null &&
-        navigatorKey.currentContext != null) {
-      ScaffoldMessenger.of(navigatorKey.currentContext!)
-          .showSnackBar(
-        SnackBar(
-          content: Text(
-            message.notification!.title ?? "Notification",
+    if (message.notification != null) {
+      await flutterLocalNotificationsPlugin.show(
+        message.hashCode,
+        message.notification!.title,
+        message.notification!.body,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'bus_alerts',
+            'Bus Alerts',
+            importance: Importance.high,
+            priority: Priority.high,
           ),
-          duration: const Duration(seconds: 3),
         ),
       );
     }
   });
-  /// 🔥 WHEN USER CLICKS NOTIFICATION
-  FirebaseMessaging.onMessageOpenedApp.listen(
-          (RemoteMessage message) async {
-        print("🔥 Notification clicked");
 
-        await saveNotification(message);
-      });
+  /// 🔥 CLICK HANDLER
+  FirebaseMessaging.onMessageOpenedApp
+      .listen((RemoteMessage message) async {
+    await saveNotification(message);
+
+    final type = message.data['type'];
+
+    if (type == "ISSUE") {
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (_) => const DriverHomePage(),
+        ),
+      );
+    }
+  });
 
   runApp(const MyApp());
 }
@@ -114,7 +195,8 @@ class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key});
 
   @override
-  State<WelcomePage> createState() => _WelcomePageState();
+  State<WelcomePage> createState() =>
+      _WelcomePageState();
 }
 
 class _WelcomePageState extends State<WelcomePage> {
@@ -123,38 +205,33 @@ class _WelcomePageState extends State<WelcomePage> {
   void initState() {
     super.initState();
     _checkAutoLogin();
-
-    // Optional Firebase test
-    FirebaseDatabase.instance
-        .ref("test")
-        .set("SmartBus connected");
   }
 
-  /// 🔥 AUTO LOGIN
   Future<void> _checkAutoLogin() async {
-    SharedPreferences prefs =
+    final prefs =
     await SharedPreferences.getInstance();
-    bool isLoggedIn = prefs.getBool("isLoggedIn") ?? false;
-    String role = prefs.getString("role") ?? "";
 
+    bool isLoggedIn =
+        prefs.getBool("isLoggedIn") ?? false;
+    String role =
+        prefs.getString("role") ?? "";
 
-    if (isLoggedIn == true && role != null) {
+    if (!isLoggedIn) return;
 
-      if (role == "student") {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-              builder: (_) => const StudentHomePage()),
-        );
-      }
-
-      else if (role == "driver") {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-              builder: (_) => const DriverHomePage()),
-        );
-      }
+    if (role == "student") {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+            builder: (_) =>
+            const StudentHomePage()),
+      );
+    } else if (role == "driver") {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+            builder: (_) =>
+            const DriverHomePage()),
+      );
     }
   }
 
@@ -179,10 +256,9 @@ class _WelcomePageState extends State<WelcomePage> {
               Expanded(
                 child: Center(
                   child: Column(
-                    mainAxisSize: MainAxisSize.min,
+                    mainAxisSize:
+                    MainAxisSize.min,
                     children: [
-
-                      /// STUDENT LOGIN
                       SizedBox(
                         width: 220,
                         height: 50,
@@ -191,7 +267,7 @@ class _WelcomePageState extends State<WelcomePage> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) =>
+                                builder: (_) =>
                                 const StudentLoginPage(),
                               ),
                             );
@@ -199,7 +275,8 @@ class _WelcomePageState extends State<WelcomePage> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor:
                             const Color(0xFF00C9A7),
-                            shape: RoundedRectangleBorder(
+                            shape:
+                            RoundedRectangleBorder(
                               borderRadius:
                               BorderRadius.circular(25),
                             ),
@@ -218,7 +295,6 @@ class _WelcomePageState extends State<WelcomePage> {
 
                       const SizedBox(height: 20),
 
-                      /// DRIVER LOGIN
                       SizedBox(
                         width: 220,
                         height: 50,
@@ -227,7 +303,7 @@ class _WelcomePageState extends State<WelcomePage> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) =>
+                                builder: (_) =>
                                 const DriverLoginPage(),
                               ),
                             );
@@ -238,7 +314,8 @@ class _WelcomePageState extends State<WelcomePage> {
                               Color(0xFF00C9A7),
                               width: 2,
                             ),
-                            shape: RoundedRectangleBorder(
+                            shape:
+                            RoundedRectangleBorder(
                               borderRadius:
                               BorderRadius.circular(25),
                             ),
