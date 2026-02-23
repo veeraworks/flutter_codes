@@ -234,7 +234,7 @@ class _MapPageState extends State<MapPage> {
 
     _busListener =
         FirebaseDatabase.instance
-            .ref("buses/$busId/current") // ✅ FIX
+            .ref("buses/$busId/current")
             .onValue
             .listen((event){
 
