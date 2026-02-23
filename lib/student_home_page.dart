@@ -527,7 +527,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
               ),
             ),
 
-            _drawerItem(Icons.map, "Live Map", () {
+            _drawerItem(Icons.map, "View Map", () {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const MapPage()),
