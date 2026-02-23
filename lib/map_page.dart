@@ -78,7 +78,7 @@ class _MapPageState extends State<MapPage> {
     await SharedPreferences.getInstance();
 
     busId =
-        prefs.getString("busId")?.toUpperCase();
+        prefs.getString("busId");
 
     stopName =
         prefs.getString("stopName");
