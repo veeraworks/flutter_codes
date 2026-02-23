@@ -30,7 +30,9 @@ Future<void> handleInitialMessage() async {
 
     final type = initialMessage.data['type'];
 
-    if (type == "ISSUE" || type == "TEMP_BUS") {
+    if (type == "ISSUE" ||
+        type == "TEMP_BUS_ACTIVE" ||
+        type == "TEMP_BUS_CLEARED") {
       navigatorKey.currentState?.push(
         MaterialPageRoute(
           builder: (_) => const NotificationsPage(),
@@ -67,7 +69,6 @@ Future<void> main() async {
       AndroidFlutterLocalNotificationsPlugin>()
       ?.createNotificationChannel(channel);
 
-  await handleInitialMessage();
   await initializeService();
 
   FirebaseMessaging.onBackgroundMessage(
@@ -100,7 +101,9 @@ Future<void> main() async {
       .listen((RemoteMessage message) async {
     final type = message.data['type'];
 
-    if (type == "ISSUE" || type == "TEMP_BUS") {
+    if (type == "ISSUE" ||
+        type == "TEMP_BUS_ACTIVE" ||
+        type == "TEMP_BUS_CLEARED") {
       navigatorKey.currentState?.push(
         MaterialPageRoute(
           builder: (_) => const NotificationsPage(),
@@ -112,25 +115,32 @@ Future<void> main() async {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+class _MyAppState extends State<MyApp> {
+
+  @override
+  void initState() {
+    super.initState();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      handleInitialMessage();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.light,
-        colorSchemeSeed: const Color(0xFF00C9A7),
-        scaffoldBackgroundColor: Colors.white,
-        useMaterial3: true,
-      ),
       home: const WelcomePage(),
     );
   }
 }
-
 class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key});
 
