@@ -42,31 +42,38 @@ class _StudentHomePageState extends State<StudentHomePage> {
   StreamSubscription? _notificationListener;
 
   String? _prevTempRoute; // track previous temp route to avoid duplicate snackbars
-
   @override
   void initState() {
     super.initState();
+    _initializeStudent();
+  }
+  Future<void> _initializeStudent() async {
 
-    _refreshStudentProfile();
-    _requestPermission();
+    // 1️⃣ Load fresh profile from backend
+    await _refreshStudentProfile();
+
+    // 2️⃣ Load student info into state
+    await _loadStudentInfo();
+
+    // 3️⃣ Subscribe to original bus topic
+    if (busId != null) {
+      await _subscribeToRoute();
+    }
+
+    // 4️⃣ Request notification permission
+    await _requestPermission();
+
+    // 5️⃣ Attach listeners
     _listenForMessages();
-
-    _loadStudentInfo().then((_) async {
-      print(" Student Bus ID: $busId");
-
-      if (busId != null) {
-        print(" Subscribing to topic: ${busId!.toLowerCase()}");
-        await _subscribeToRoute();
-      } else {
-        print(" busId still NULL after loading!");
-      }
-    });
-
     _listenToNotifications();
     _listenToBusIssues();
     _listenToBus();
     _listenToTemporaryBus();
 
+    // 6️⃣ Start GPS tracking
+    _startLocationTracking();
+  }
+  void _startLocationTracking() {
     Geolocator.getCurrentPosition(
       desiredAccuracy: LocationAccuracy.medium,
     ).then((pos) {
@@ -74,6 +81,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
     }).catchError((e) {
       print("Initial student GPS error: $e");
     });
+
     _studentLocationTimer =
         Timer.periodic(const Duration(seconds: 20), (_) async {
           try {
@@ -85,7 +93,6 @@ class _StudentHomePageState extends State<StudentHomePage> {
           }
         });
   }
-
   @override
   void dispose() {
     _issueListener?.cancel();
@@ -166,32 +173,23 @@ class _StudentHomePageState extends State<StudentHomePage> {
   }
 
   void _listenForMessages() {
-
     FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
 
-      print("🔔 Notification Received!");
-
-      final prefs = await SharedPreferences.getInstance();
-      final regNo = prefs.getString("regNo");
-
-      if (regNo == null) return;
-
       String title =
-          message.data['title'] ??
-              message.notification?.title ??
+          message.notification?.title ??
+              message.data['title'] ??
               "Notification";
 
       String body =
-          message.data['body'] ??
-              message.notification?.body ??
+          message.notification?.body ??
+              message.data['body'] ??
               "";
 
-      // Snackbar (foreground only)
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("$title\n$body")),
-        );
-      }
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("$title\n$body")),
+      );
     });
   }
 
@@ -288,21 +286,19 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
       final data = event.snapshot.value as Map?;
 
+      // ================= TEMP ACTIVE =================
       if (data != null && data["status"] == "ACTIVE") {
 
         final String? newBus = data["newBus"];
         final String? tempRoute = data["tempRoute"];
 
         print("🚍 TEMP BUS ACTIVE");
-        print("Unsubscribing from: ${originalBusId.toLowerCase()}");
+        print("Original topic remains subscribed: ${originalBusId.toLowerCase()}");
         print("Subscribing to temp bus: ${newBus?.toLowerCase()}");
 
-        // 🔥 Unsubscribe from original topic
-        await FirebaseMessaging.instance
-            .unsubscribeFromTopic(originalBusId.toLowerCase());
+        // 🔥 DO NOT unsubscribe original topic
 
-        // 🔥 Subscribe to temporary topic
-        if (newBus != null) {
+        if (newBus != null && tempBus != newBus) {
           await FirebaseMessaging.instance
               .subscribeToTopic(newBus.toLowerCase());
         }
@@ -313,27 +309,30 @@ class _StudentHomePageState extends State<StudentHomePage> {
         });
 
         await _listenToBus();
-      } else {
+        await _listenToBusIssues();
+      }
+
+      // ================= TEMP CLEARED =================
+      else {
 
         print("🔄 TEMP BUS CLEARED");
 
-        // 🔥 Unsubscribe from temp topic
+        // 🔥 Unsubscribe from temp topic only
         if (tempBus != null) {
           print("Unsubscribing from temp bus: ${tempBus!.toLowerCase()}");
           await FirebaseMessaging.instance
               .unsubscribeFromTopic(tempBus!.toLowerCase());
         }
 
-        // 🔥 Subscribe back to original topic
-        print("Subscribing back to: ${originalBusId.toLowerCase()}");
-        await FirebaseMessaging.instance
-            .subscribeToTopic(originalBusId.toLowerCase());
+        // ❌ DO NOT resubscribe original (already subscribed)
 
         setState(() {
           tempBus = null;
           displayRoute = routeName;
         });
+
         await _listenToBus();
+        await _listenToBusIssues();
       }
     });
   }

@@ -165,7 +165,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
         final String? newBus = data["newBus"];
         final String? newRoute = data["tempRoute"];
 
-        if (newBus == null) return;
+        if (newBus == null || newBus == busId) return;
 
         setState(() {
           isTempBusActive = true;
@@ -514,6 +514,31 @@ class _DriverHomePageState extends State<DriverHomePage> {
               ),
             ),
             ListTile(
+              leading: const Icon(Icons.map, color: Colors.blue),
+              title: const Text("Live Map"),
+              onTap: () {
+                Navigator.pop(context);
+
+                if (!tripStarted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Start trip to view map")),
+                  );
+                  return;
+                }
+
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => DriverFullMapPage(
+                      currentLatLng: _currentLatLng,
+                      marker: _driverMarker,
+                      routePoints: List.from(_routePoints),
+                    ),
+                  ),
+                );
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.swap_horiz, color: Colors.orange),
               title: const Text("Temporary Bus Change"),
               onTap: () async {
@@ -604,9 +629,9 @@ class _DriverHomePageState extends State<DriverHomePage> {
               ],
             ),
           ),
+
           const SizedBox(height: 20),
 
-// 1️⃣ BUS INFORMATION CARD
           _infoCard(
             title: 'Bus Information',
             children: [
@@ -618,7 +643,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
           const SizedBox(height: 16),
 
-// 2️⃣ TEMPORARY CARD (SEPARATE — NOT INSIDE)
           if (isTempBusActive)
             _infoCard(
               title: "Temporary Bus Active",
@@ -631,7 +655,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
           const SizedBox(height: 16),
 
-// 3️⃣ LOCATION STATUS
           _infoCard(
             title: 'Location Status',
             children: [
@@ -641,61 +664,8 @@ class _DriverHomePageState extends State<DriverHomePage> {
             ],
           ),
 
-          if (tripStarted)
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: Stack(
-                    children: [
-                      SizedBox(
-                        height: 250,
-                        child: GoogleMap(
-                          initialCameraPosition: CameraPosition(
-                            target: _currentLatLng,
-                            zoom: 16,
-                          ),
-                          onMapCreated: (controller) {
-                            _mapController = controller;
-                          },
-                          myLocationEnabled: true,
-                          myLocationButtonEnabled: true,
-                          markers: {
-                            if (_driverMarker != null) _driverMarker!,
-                            if (_startMarker != null) _startMarker!,
-                            if (_endMarker != null) _endMarker!,
-                          },
-                          polylines: _polylines,
-                        ),
-                      ),
-                      Positioned.fill(
-                        child: Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTap: () {
-                              print("Route points count = ${_routePoints.length}");
+          const Spacer(),
 
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => DriverFullMapPage(
-                                    currentLatLng: _currentLatLng,
-                                    marker: _driverMarker,
-
-                                    routePoints: List.from(_routePoints),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
             child: tripStarted
