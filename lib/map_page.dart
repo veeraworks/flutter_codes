@@ -78,7 +78,7 @@ class _MapPageState extends State<MapPage> {
     await SharedPreferences.getInstance();
 
     busId =
-        prefs.getString("busId");
+        prefs.getString("busId")?.toUpperCase();
 
     stopName =
         prefs.getString("stopName");
@@ -143,7 +143,7 @@ class _MapPageState extends State<MapPage> {
 
 
 
-  // STOPS LISTENER
+  // REALTIME STOPS
   Future<void> _listenStopsRealtime() async {
 
     if(busId == null) return;
@@ -220,7 +220,7 @@ class _MapPageState extends State<MapPage> {
 
 
 
-  // BUS LISTENER (🔥 FIXED PATH HERE)
+  // REALTIME BUS
   Future<void> _listenBusRealtime() async {
 
     if(busId == null) return;
@@ -234,20 +234,14 @@ class _MapPageState extends State<MapPage> {
 
     _busListener =
         FirebaseDatabase.instance
-            .ref("buses/$busId/current") // ✅ FIX
+            .ref("buses/$busId")
             .onValue
             .listen((event){
 
           final data =
               event.snapshot.value;
 
-          if(data == null){
-
-            print("No bus data found");
-
-            return;
-
-          }
+          if(data == null) return;
 
           final map =
           Map<String,dynamic>.from(data as Map);
@@ -321,7 +315,7 @@ class _MapPageState extends State<MapPage> {
 
 
 
-  // ETA CALCULATION
+  // ETA
   void calculateETA(){
 
     if(_busLocation == null ||

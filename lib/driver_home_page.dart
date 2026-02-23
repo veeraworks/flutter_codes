@@ -38,6 +38,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
   String permRouteName = "-";
   String? tempBusNumber;
   String? tempRouteName;
+  double _lastSpeed = 0;
 
   Timer? _gpsCheckTimer;
   bool gpsOn = false;
@@ -64,7 +65,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
   @override
   void initState() {
     super.initState();
-    _refreshDriverProfile();
     _initialize();
 
     _gpsCheckTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
@@ -77,26 +77,32 @@ class _DriverHomePageState extends State<DriverHomePage> {
   Future<void> _initialize() async {
     final prefs = await SharedPreferences.getInstance();
 
-
     await _loadBusId();
+    await _refreshDriverProfile();
+    await _loadBusInfo();
+    await _listenToTemporaryBus();
+
     final wasTracking = prefs.getBool("trackingActive") ?? false;
     final savedTripId = prefs.getString("activeTripId");
+
     if (wasTracking && savedTripId != null) {
-
-      await _loadBusInfo();
-      await _listenToTemporaryBus();
-
       setState(() {
         tripStarted = true;
         currentTripId = savedTripId;
         tripMode = prefs.getString("tripMode");
       });
 
+      if (tripStarted && busId != null) {
+        FlutterBackgroundService().startService();
+        FlutterBackgroundService().invoke("setBusId", {
+          "busId": busId
+        });
+      }
+
       _startLocationUpdates();
     }
-    await _loadBusInfo();
+
     await _checkStatuses();
-    await _listenToTemporaryBus();
 
     setState(() {
       _initialized = true;
@@ -144,37 +150,67 @@ class _DriverHomePageState extends State<DriverHomePage> {
     final permId = prefs.getString("busId");
     if (permId == null) return;
 
+    _tempBusListener?.cancel();
+
     _tempBusListener = FirebaseDatabase.instance
-        .ref("temporaryBusChanges/$permId")
+        .ref("temporaryBusChanges/${permId.toUpperCase()}")
         .onValue
-        .listen((event) {
+        .listen((event) async {
 
       final data = event.snapshot.value as Map?;
 
+      // ================= ACTIVE =================
       if (data != null && data["status"] == "ACTIVE") {
+
+        final String? newBus = data["newBus"];
+        final String? newRoute = data["tempRoute"];
+
+        if (newBus == null || newBus == busId) return;
 
         setState(() {
           isTempBusActive = true;
-          tempBusNumber = data["newBus"];
-          tempRouteName = data["tempRoute"];
-
-          // ✅ VERY IMPORTANT
-          busId = data["newBus"];
+          tempBusNumber = newBus;
+          tempRouteName = newRoute;
+          busId = newBus;
         });
 
-      } else {
+        // 🔥 SAVE TEMP STATE
+        await prefs.setBool("isTempBusActive", true);
+        await prefs.setString("tempBusNumber", newBus);
+        await prefs.setString("tempRouteName", newRoute ?? "");
+
+        // 🔥 UPDATE BACKGROUND SERVICE
+        if (tripStarted) {
+          FlutterBackgroundService().invoke("setBusId", {
+            "busId": busId,
+          });
+        }
+      }
+
+      // ================= CLEAR =================
+      else {
 
         setState(() {
           isTempBusActive = false;
           tempBusNumber = null;
           tempRouteName = null;
-
           busId = permBusId;
         });
+
+        // 🔥 CLEAR SAVED TEMP STATE
+        await prefs.setBool("isTempBusActive", false);
+        await prefs.remove("tempBusNumber");
+        await prefs.remove("tempRouteName");
+
+        // 🔥 UPDATE BACKGROUND SERVICE
+        if (tripStarted) {
+          FlutterBackgroundService().invoke("setBusId", {
+            "busId": busId,
+          });
+        }
       }
     });
   }
-
   // ---------------- CHECK GPS / INTERNET ---------------------------------------
   Future<void> _checkStatuses() async {
     final gpsEnabled = await Geolocator.isLocationServiceEnabled();
@@ -208,11 +244,13 @@ class _DriverHomePageState extends State<DriverHomePage> {
       print("GPS SERVICE DISABLED");
       return;
     }
+
     LocationPermission permission = await Geolocator.checkPermission();
 
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
+
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
       print("LOCATION PERMISSION DENIED");
@@ -227,15 +265,36 @@ class _DriverHomePageState extends State<DriverHomePage> {
         distanceFilter: 5,
       ),
     ).listen((position) {
-      print("GPS UPDATE → ${position.latitude}, ${position.longitude}");
 
-    if (!tripStarted) {
-      print("GPS running but trip not started");
-      return;
-    }
+      print("GPS UPDATE → ${position.latitude}, ${position.longitude}");
+      print("RAW SPEED → ${position.speed} m/s");
+
+      if (!tripStarted) {
+        print("GPS running but trip not started");
+        return;
+      }
 
       final latLng = LatLng(position.latitude, position.longitude);
 
+      // ================= SPEED STABILIZATION =================
+      double realSpeed = position.speed;
+
+      // Remove tiny GPS noise
+      if (realSpeed < 0.5) {
+        realSpeed = 0;
+      }
+
+      // Apply exponential smoothing (70% previous + 30% new)
+      realSpeed = (_lastSpeed * 0.7) + (realSpeed * 0.3);
+
+      // Round to 1 decimal place
+      realSpeed = double.parse(realSpeed.toStringAsFixed(1));
+
+      _lastSpeed = realSpeed;
+
+      print("SMOOTHED SPEED → $realSpeed m/s");
+
+      // ================= UI UPDATE =================
       setState(() {
         _currentLatLng = latLng;
 
@@ -247,18 +306,17 @@ class _DriverHomePageState extends State<DriverHomePage> {
           ),
         );
 
-        _routePoints.add(latLng);
-        print("Route points now = ${_routePoints.length}");
+        if (_routePoints.isEmpty ||
+            Geolocator.distanceBetween(
+              _routePoints.last.latitude,
+              _routePoints.last.longitude,
+              latLng.latitude,
+              latLng.longitude,
+            ) > 5) {
 
-        _polylines.clear();
-        _polylines.add(
-          Polyline(
-            polylineId: const PolylineId("route"),
-            points: _routePoints,
-            color: Colors.blue,
-            width: 5,
-          ),
-        );
+          _routePoints.add(latLng);
+        }
+
         _polylines = {
           Polyline(
             polylineId: const PolylineId("route"),
@@ -276,13 +334,13 @@ class _DriverHomePageState extends State<DriverHomePage> {
         CameraUpdate.newLatLng(latLng),
       );
 
-      // Update Firebase only if busId exists (non-blocking)
-      // Update Firebase only if busId exists AND internet is ON
+      // ================= FIREBASE UPDATE =================
       if (busId != null && internetOn) {
-        FirebaseDatabase.instance.ref("buses/$busId").update({
+        FirebaseDatabase.instance.ref("buses/$busId/current").update({
           "lat": position.latitude,
           "lng": position.longitude,
           "bearing": position.heading,
+          "speed": realSpeed, // 🔥 stable speed
           "updatedAt": ServerValue.timestamp,
         }).catchError((e) {
           print("Failed to update bus location: $e");
@@ -390,23 +448,27 @@ class _DriverHomePageState extends State<DriverHomePage> {
     if (phone == null) return;
 
     final response = await http.get(
-      Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/profile?phone=$phone"),
+      Uri.parse(
+          "https://null-sheldon-unstudded.ngrok-free.dev/drivers/profile?phone=$phone"),
     );
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
 
-      setState(() {
-        permBusNumber = data["busId"];
-        permRouteName = data["busName"];
-
-        busNumber = permBusNumber;
-        routeName = permRouteName;
-      });
-
+      await prefs.setString("driverName", data["name"]);
+      await prefs.setString("phoneNumber", data["phone"]);
       await prefs.setString("busId", data["busId"]);
       await prefs.setString("busNumber", data["busId"]);
       await prefs.setString("routeName", data["busName"]);
+      await prefs.setString("shift", data["shift"]);
+
+      setState(() {
+        permBusNumber = data["busId"];
+        permRouteName = data["busName"];
+        busId = data["busId"];
+        shift = data["shift"] ?? "-";
+        permBusId = data["busId"];
+      });
     }
   }
 
@@ -450,6 +512,31 @@ class _DriverHomePageState extends State<DriverHomePage> {
                 context,
                 MaterialPageRoute(builder: (_) => const DriverProfilePage()),
               ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.map, color: Colors.blue),
+              title: const Text("Live Map"),
+              onTap: () {
+                Navigator.pop(context);
+
+                if (!tripStarted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Start trip to view map")),
+                  );
+                  return;
+                }
+
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => DriverFullMapPage(
+                      currentLatLng: _currentLatLng,
+                      marker: _driverMarker,
+                      routePoints: List.from(_routePoints),
+                    ),
+                  ),
+                );
+              },
             ),
             ListTile(
               leading: const Icon(Icons.swap_horiz, color: Colors.orange),
@@ -548,50 +635,24 @@ class _DriverHomePageState extends State<DriverHomePage> {
           _infoCard(
             title: 'Bus Information',
             children: [
-              // show permanent values as before
-              _infoRow(
-                'Route',
-                isTempBusActive ? "$permRouteName (Original)" : permRouteName,
-              ),
-
-              _infoRow(
-                'Bus Number',
-                isTempBusActive ? "$permBusNumber (Original)" : permBusNumber,
-              ),
+              _infoRow('Route', permRouteName),
+              _infoRow('Bus Number', permBusNumber),
               _infoRow('Shift', shift),
-
-              // show temporary details only under this card (do not replace permanent display)
-              if (isTempBusActive)
-                Container(
-                  width: double.infinity,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade100,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.orange),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.warning_amber_rounded,
-                          color: Colors.orange),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          "Temporary Bus Active\n"
-                              "Bus: ${tempBusNumber ?? "-"}\n"
-                              "Route: ${tempRouteName ?? "-"}",
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: Colors.black87,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
             ],
           ),
+
+          const SizedBox(height: 16),
+
+          if (isTempBusActive)
+            _infoCard(
+              title: "Temporary Bus Active",
+              titleColor: Colors.orange,
+              children: [
+                _infoRow("Temporary Bus", tempBusNumber ?? "-"),
+                _infoRow("Temporary Route", tempRouteName ?? "-"),
+              ],
+            ),
+
           const SizedBox(height: 16),
 
           _infoCard(
@@ -603,62 +664,8 @@ class _DriverHomePageState extends State<DriverHomePage> {
             ],
           ),
 
-          if (tripStarted)
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: Stack(
-                    children: [
-                      SizedBox(
-                        height: 250,
-                        child: GoogleMap(
-                          initialCameraPosition: CameraPosition(
-                            target: _currentLatLng,
-                            zoom: 16,
-                          ),
-                          onMapCreated: (controller) {
-                            _mapController = controller;
-                          },
-                          myLocationEnabled: true,
-                          myLocationButtonEnabled: true,
-                          markers: {
-                            if (_driverMarker != null) _driverMarker!,
-                            if (_startMarker != null) _startMarker!,
-                            if (_endMarker != null) _endMarker!,
-                          },
-                          polylines: _polylines,
-                        ),
-                      ),
-                      Positioned.fill(
-                        child: Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTap: () {
-                              print("Route points count = ${_routePoints.length}");
+          const Spacer(),
 
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => DriverFullMapPage(
-                                    currentLatLng: _currentLatLng,
-                                    marker: _driverMarker,
-
-                                    // 🔴 THIS LINE IS MANDATORY
-                                    routePoints: List.from(_routePoints),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
             child: tripStarted
@@ -736,6 +743,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
   Widget _infoCard({
     required String title,
     required List<Widget> children,
+    Color titleColor = Colors.black,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -748,9 +756,14 @@ class _DriverHomePageState extends State<DriverHomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title,
-                style: const TextStyle(
-                    fontSize: 18, fontWeight: FontWeight.w600)),
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: titleColor,
+              ),
+            ),
             const SizedBox(height: 12),
             ...children,
           ],

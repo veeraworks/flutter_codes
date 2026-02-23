@@ -4,7 +4,8 @@ import 'package:flutter_background_service_android/flutter_background_service_an
 import 'package:geolocator/geolocator.dart';
 import 'package:firebase_database/firebase_database.dart';
 
-String? activeBusId;   // 🔴 STEP 3.1 IMPORTANT
+String? activeBusId;
+double _lastSpeed = 0;   // 🔥 speed smoothing memory
 
 Future<void> initializeService() async {
   final service = FlutterBackgroundService();
@@ -32,30 +33,59 @@ void onStart(ServiceInstance service) {
     );
   }
 
-  // 🔴 STEP 3.2 RECEIVE BUS ID FROM APP
+  // ✅ RECEIVE UPDATED BUS ID FROM DRIVER APP
   service.on("setBusId").listen((event) {
-    activeBusId = event?["busId"];
+    activeBusId = event?["busId"]?.toString().toUpperCase();
+    print("🔥 Background busId updated to: $activeBusId");
   });
 
-  // 🔴 STEP 3.3 STOP SERVICE WHEN TRIP ENDS
+  // ✅ STOP SERVICE WHEN TRIP ENDS
   service.on("stopService").listen((event) {
+    print("🛑 Background service stopping...");
     service.stopSelf();
   });
 
-  // 🔴 STEP 3.4 GPS LOOP
+  // ✅ GPS LOOP
   Timer.periodic(const Duration(seconds: 5), (timer) async {
 
     if (activeBusId == null) return;
 
-    Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high);
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
 
-    FirebaseDatabase.instance.ref("buses/$activeBusId").update({
-      "lat": position.latitude,
-      "lng": position.longitude,
-      "bearing": position.heading,
-      "updatedAt": ServerValue.timestamp,
-    });
+      // ================= SPEED STABILIZATION =================
+      double realSpeed = position.speed;
 
+      // Remove tiny GPS noise
+      if (realSpeed < 0.5) {
+        realSpeed = 0;
+      }
+
+      // Exponential smoothing
+      realSpeed = (_lastSpeed * 0.7) + (realSpeed * 0.3);
+
+      // Round to 1 decimal
+      realSpeed = double.parse(realSpeed.toStringAsFixed(1));
+
+      _lastSpeed = realSpeed;
+
+      print("📡 BG UPDATE → $activeBusId | Speed: $realSpeed m/s");
+
+      // ✅ UPDATE FIREBASE (CORRECT PATH)
+      await FirebaseDatabase.instance
+          .ref("buses/$activeBusId/current")
+          .update({
+        "lat": position.latitude,
+        "lng": position.longitude,
+        "bearing": position.heading,
+        "speed": realSpeed,
+        "updatedAt": ServerValue.timestamp,
+      });
+
+    } catch (e) {
+      print("❌ Background GPS error: $e");
+    }
   });
 }

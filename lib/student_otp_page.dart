@@ -52,6 +52,7 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
 
         await prefs.setBool("isLoggedIn", true);
         await prefs.setString("role", "student");
+        await prefs.setString("regNo", student["regNo"] ?? "");
         await prefs.setString("studentId", student["regNo"] ?? "");
         await prefs.setString("studentName", student["name"] ?? "");
         await prefs.setString("routeName", student["route"] ?? "");
