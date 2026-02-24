@@ -36,7 +36,8 @@ class _MapPageState extends State<MapPage> {
   String? busId;
   String? stopName;
 
-  final String googleAPIKey = "AIzaSyAeAYcObFrWvXkt3HEGutI7W6Pp7MOWv2k"; // 🔑
+  // ✅ Use the same key as in your manifest
+  final String googleAPIKey = "AIzaSyAeAYcObFrWvXkt3HEGutI7W6Pp7MOWv2k";
 
   @override
   void initState() {
@@ -175,13 +176,17 @@ class _MapPageState extends State<MapPage> {
     });
   }
 
-  // ✅ ROUTE DRAWING METHOD
+  // ✅ ROUTE DRAWING METHOD (fixed for latest API)
   Future<void> _drawRoute(LatLng origin, LatLng destination) async {
     PolylinePoints polylinePoints = PolylinePoints();
+
     PolylineResult result = await polylinePoints.getRouteBetweenCoordinates(
-      googleAPIKey,
-      PointLatLng(origin.latitude, origin.longitude),
-      PointLatLng(destination.latitude, destination.longitude),
+      request: PolylineRequest(
+        origin: PointLatLng(origin.latitude, origin.longitude),
+        destination: PointLatLng(destination.latitude, destination.longitude),
+        mode: TravelMode.driving,
+      ),
+      googleApiKey: googleAPIKey,
     );
 
     if (result.points.isNotEmpty) {
@@ -200,6 +205,8 @@ class _MapPageState extends State<MapPage> {
           ),
         );
       });
+    } else {
+      print("Polyline error: ${result.errorMessage}");
     }
   }
 
