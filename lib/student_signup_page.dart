@@ -29,11 +29,23 @@
     String verificationId = "";
     bool isPreRegistered = false;
     bool isValidRegisterNumber = false;
-
+    String? selectedRoute;
+    String? selectedBoardingPoint;
     String? busId;
     String? busName;
     String? boardingPoint;
+    String? selectedDepartment;
 
+    List<String> departmentList = [
+      "Mech",
+      "Civil",
+      "EEE",
+      "ECE",
+      "CSE",
+      "IoT",
+    ];
+    List<String> routeList = [];
+    List<String> boardingPointList = [];
     //================= CHECK REGISTER NUMBER =================
     Future<void> checkRegisterNumber() async {
 
@@ -86,11 +98,13 @@
           setState(() {
             nameController.text = data["name"];
             busId = data["busId"];
-            busName = data["busName"];
-            boardingPoint = data["boardingPoint"];
+            selectedRoute = data["busName"];
+            selectedBoardingPoint = data["boardingPoint"];
+            routeList = [data["busName"]];
+            boardingPointList = [data["boardingPoint"]];
+
             isValidRegisterNumber = true;
           });
-
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text("Register number verified"),
@@ -176,6 +190,19 @@
 
     // ---------------- VERIFY OTP & SAVE ----------------
     Future<void> verifyOtpAndRegister() async {
+
+      if (selectedDepartment == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Please select Department")),
+        );
+        return;
+      }
+      if (selectedRoute == null || selectedBoardingPoint == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Student route not found")),
+        );
+        return;
+      }
       try {
         setState(() => isLoading = true);
 
@@ -192,6 +219,9 @@
           headers: {"Content-Type": "application/json"},
           body: jsonEncode({
             "regNo": regController.text.trim(),
+            "department": selectedDepartment,
+            "routeName": selectedRoute,
+            "boardingPoint": selectedBoardingPoint,
           }),
         );
 
@@ -202,8 +232,9 @@
           await prefs.setBool("isLoggedIn", true);
           await prefs.setString("role", "student");
           await prefs.setString("busId", busId!);
-          await prefs.setString("routeName", busName!);
-          await prefs.setString("boardingPoint", boardingPoint!);
+          await prefs.setString("routeName", selectedRoute!);
+          await prefs.setString("boardingPoint", selectedBoardingPoint!);
+          await prefs.setString("department", selectedDepartment!);
 
           // 🔔 Subscribe to bus topic
           await FirebaseMessaging.instance
@@ -290,10 +321,74 @@
                           const SizedBox(height: 16),
 
                           inputBox(regController, "Register Number", Icons.badge),
-                          inputBox(nameController, "Student Name", Icons.person),
+
+                          TextField(
+                            controller: nameController,
+                            readOnly: true,
+                            decoration: InputDecoration(
+                              prefixIcon: const Icon(Icons.person, color: Colors.teal),
+                              hintText: "Student Name",
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
 
                           inputBox(phoneController, "Phone Number", Icons.phone,
                               type: TextInputType.phone),
+
+                          const SizedBox(height: 12),
+                          DropdownButtonFormField<String>(
+                            value: selectedDepartment,
+                            decoration: InputDecoration(
+                              prefixIcon: const Icon(Icons.school, color: Colors.teal),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            hint: const Text("Department"),
+                            items: departmentList.map((dept) {
+                              return DropdownMenuItem(
+                                value: dept,
+                                child: Text(dept),
+                              );
+                            }).toList(),
+                            onChanged: (value) {
+                              setState(() {
+                                selectedDepartment = value;
+                              });
+                            },
+                          ),
+
+                          const SizedBox(height: 12),
+
+                          TextField(
+                            controller: TextEditingController(text: selectedRoute ?? ""),
+                            readOnly: true,
+                            decoration: InputDecoration(
+                              prefixIcon: const Icon(Icons.directions_bus, color: Colors.teal),
+                              hintText: "Route Name",
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 12),
+
+                          TextField(
+                            controller: TextEditingController(text: selectedBoardingPoint ?? ""),
+                            readOnly: true,
+                            decoration: InputDecoration(
+                              prefixIcon: const Icon(Icons.location_on, color: Colors.teal),
+                              hintText: "Boarding Point",
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
 
                           if (otpSent)
                             inputBox(otpController, "Enter OTP", Icons.lock,
