@@ -27,8 +27,7 @@ class LocationService {
         distanceFilter: 5,
       ),
     ).listen((position) {
-      FirebaseDatabase.instance.ref("buses/$busId").update({
-        "lat": position.latitude,
+      FirebaseDatabase.instance.ref("buses/$busId/current").update({        "lat": position.latitude,
         "lng": position.longitude,
         "bearing": position.heading,
         "updatedAt": ServerValue.timestamp,

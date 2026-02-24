@@ -579,7 +579,8 @@ class _DriverHomePageState extends State<DriverHomePage> {
         ),
       ),
 
-      body: Column(
+        body: SingleChildScrollView(
+          child: Column(
         children: [
           // HEADER
           Container(
@@ -664,7 +665,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
             ],
           ),
 
-          const Spacer(),
+          const SizedBox(height: 20),
 
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
@@ -736,6 +737,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
           ),
         ],
       ),
+        )
     );
   }
 

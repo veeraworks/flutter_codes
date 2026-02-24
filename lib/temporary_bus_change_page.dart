@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class TemporaryBusChangePage extends StatefulWidget {
@@ -13,11 +12,11 @@ class TemporaryBusChangePage extends StatefulWidget {
 }
 
 class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
-  final TextEditingController busController = TextEditingController();
 
   String currentBus = "-";
   String currentRoute = "-";
   String selectedRoute = "";
+  String? selectedBus;
 
   bool isTempActive = false; // 🔥 KEY FLAG
 
@@ -78,35 +77,21 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
       return;
     }
 
-    final String newBus =
-    busController.text.trim().isNotEmpty
-        ? busController.text.trim()
-        : originalBus;
-
+    final String newBus = selectedBus ?? originalBus;
     try {
       // ✅ UPDATE LOCAL STORAGE
       await prefs.setString("tempBusNumber", newBus);
       await prefs.setString("tempRouteName", selectedRoute);
       await prefs.setBool("isTempBusActive", true);
 
-      // ✅ UPDATE FIREBASE REALTIME DB
-      await FirebaseDatabase.instance
-          .ref("temporaryBusChanges/${busId.toUpperCase()}")
-          .set({
-        "newBus": newBus,
-        "tempRoute": selectedRoute,
-        "status": "ACTIVE",
-        "updatedAt": ServerValue.timestamp,
-      });
-
       // ✅ CALL BACKEND (SENDS NOTIFICATION TO BUS TOPIC)
       await http.post(
         Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/temporary-bus"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
-            "busId": busId,
-            "tempBusNumber": newBus,
-            "active": true,
+          "busId": busId,
+          "tempBusNumber": newBus,
+          "active": true,
         }),
       );
 
@@ -115,8 +100,6 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
         currentBus = newBus;
         currentRoute = selectedRoute;
       });
-
-      busController.clear();
 
       if (!mounted) return;
 
@@ -156,16 +139,6 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
       await prefs.setBool("isTempBusActive", false);
       await prefs.remove("tempBusNumber");
       await prefs.remove("tempRouteName");
-
-      // ✅ UPDATE FIREBASE
-      await FirebaseDatabase.instance
-          .ref("temporaryBusChanges/${busId.toUpperCase()}")
-          .update({
-        "newBus": null,
-        "tempRoute": null,
-        "status": "CLEARED",
-        "updatedAt": ServerValue.timestamp,
-      });
 
       // ✅ CALL BACKEND (NOTIFY RESTORE)
       await http.post(
@@ -251,17 +224,27 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
                   ),
                   const SizedBox(height: 12),
 
-                  TextField(
-                    controller: busController,
-                    keyboardType: TextInputType.number,
+                  DropdownButtonFormField<String>(
+                    value: selectedBus,
+                    items: List.generate(20, (index) {
+                      String bus = "BUS${(index + 1).toString().padLeft(2, '0')}";
+                      return DropdownMenuItem(
+                        value: bus,
+                        child: Text(bus),
+                      );
+                    }),
+                    onChanged: (val) {
+                      setState(() {
+                        selectedBus = val!;
+                      });
+                    },
                     decoration: InputDecoration(
-                      hintText: "Enter new bus number",
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                       ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                     ),
                   ),
-
                   const SizedBox(height: 14),
 
                   DropdownButtonFormField<String>(
