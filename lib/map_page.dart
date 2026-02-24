@@ -14,30 +14,21 @@ class MapPage extends StatefulWidget {
 }
 
 class _MapPageState extends State<MapPage> {
-
   GoogleMapController? _mapController;
 
-  LatLng _studentLocation =
-  const LatLng(13.0827, 80.2707);
-
+  LatLng _studentLocation = const LatLng(13.0827, 80.2707);
   LatLng? _busLocation;
-
   LatLng? _studentStopLocation;
 
   Marker? _busMarker;
-
   Marker? _studentMarker;
 
   BitmapDescriptor? _busIcon;
 
   Set<Marker> _stopMarkers = {};
-
   Set<Polyline> _polylines = {};
 
-  List<LatLng> _routePoints = [];
-
   StreamSubscription<DatabaseEvent>? _busListener;
-
   StreamSubscription<DatabaseEvent>? _stopListener;
 
   double? etaMinutes;
@@ -45,433 +36,257 @@ class _MapPageState extends State<MapPage> {
   String? busId;
   String? stopName;
 
-
-
   @override
   void initState() {
     super.initState();
     initAll();
   }
 
-
-
   Future<void> initAll() async {
-
     await loadPrefs();
-
     await _getStudentLocation();
-
     await _loadBusIcon();
-
     await _listenStopsRealtime();
-
     await _listenBusRealtime();
-
   }
-
-
 
   // LOAD PREFS
   Future<void> loadPrefs() async {
-
-    final prefs =
-    await SharedPreferences.getInstance();
-
-    busId =
-        prefs.getString("busId");
-
-    stopName =
-        prefs.getString("stopName");
+    final prefs = await SharedPreferences.getInstance();
+    busId = prefs.getString("busId");
+    stopName = prefs.getString("stopName");
 
     print("BusId = $busId");
-
     print("StopName = $stopName");
-
   }
-
-
 
   // STUDENT GPS
   Future<void> _getStudentLocation() async {
-
-    bool enabled =
-    await Geolocator.isLocationServiceEnabled();
-
+    bool enabled = await Geolocator.isLocationServiceEnabled();
     if (!enabled) return;
 
     await Geolocator.requestPermission();
 
-    Position position =
-    await Geolocator.getCurrentPosition();
+    Position position = await Geolocator.getCurrentPosition();
 
     setState(() {
-
-      _studentLocation =
-          LatLng(position.latitude, position.longitude);
-
+      _studentLocation = LatLng(position.latitude, position.longitude);
       _studentMarker = Marker(
-
         markerId: const MarkerId("student"),
-
         position: _studentLocation,
-
-        icon:
-        BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueBlue),
-
+        icon: BitmapDescriptor.defaultMarkerWithHue(
+          BitmapDescriptor.hueBlue,
+        ),
       );
-
     });
-
   }
-
-
 
   // BUS ICON
   Future<void> _loadBusIcon() async {
-
-    _busIcon =
-    await BitmapDescriptor.fromAssetImage(
-
-      const ImageConfiguration(size: Size(48,48)),
-
+    _busIcon = await BitmapDescriptor.fromAssetImage(
+      const ImageConfiguration(size: Size(48, 48)),
       "assets/images/bus.png",
-
     );
-
   }
-
-
 
   // STOPS LISTENER
   Future<void> _listenStopsRealtime() async {
+    if (busId == null) return;
 
-    if(busId == null) return;
+    _stopListener = FirebaseDatabase.instance
+        .ref("busRoutes/$busId")
+        .onValue
+        .listen((event) {
 
-    _stopListener =
-        FirebaseDatabase.instance
-            .ref("busRoutes/$busId")
-            .onValue
-            .listen((event){
+      if (!event.snapshot.exists) {
+        print("No stops found");
+        return;
+      }
 
-          if(!event.snapshot.exists){
+      Map data = event.snapshot.value as Map;
 
-            print("No stops found");
+      List<Map> stopsList = [];
 
-            return;
-          }
-
-          Map data =
-          event.snapshot.value as Map;
-
-          Set<Marker> markers = {};
-
-          data.forEach((key,value){
-
-            double lat =
-            (value["lat"] as num).toDouble();
-
-            double lng =
-            (value["lng"] as num).toDouble();
-
-            String name =
-            key.toString();
-
-            LatLng pos =
-            LatLng(lat,lng);
-
-            markers.add(
-
-              Marker(
-
-                markerId:
-                MarkerId(name),
-
-                position: pos,
-
-                infoWindow:
-                InfoWindow(title: name),
-
-                icon:
-                BitmapDescriptor.defaultMarkerWithHue(
-                    BitmapDescriptor.hueOrange),
-
-              ),
-
-            );
-
-            if(name == stopName){
-
-              _studentStopLocation = pos;
-
-            }
-
-          });
-
-          setState(() {
-
-            _stopMarkers = markers;
-
-          });
-
+      data.forEach((key, value) {
+        stopsList.add({
+          "name": key,
+          "lat": value["lat"],
+          "lng": value["lng"],
+          "order": value["stopOrder"] ?? 0
         });
+      });
 
+      // Sort by stopOrder
+      stopsList.sort((a, b) => a["order"].compareTo(b["order"]));
+
+      Set<Marker> markers = {};
+      List<LatLng> routeLine = [];
+
+      for (var stop in stopsList) {
+        double lat = (stop["lat"] as num).toDouble();
+        double lng = (stop["lng"] as num).toDouble();
+        String name = stop["name"];
+
+        LatLng pos = LatLng(lat, lng);
+
+        routeLine.add(pos);
+
+        markers.add(
+          Marker(
+            markerId: MarkerId(name),
+            position: pos,
+            infoWindow: InfoWindow(title: name),
+            icon: BitmapDescriptor.defaultMarkerWithHue(
+                BitmapDescriptor.hueOrange),
+          ),
+        );
+
+        if (name == stopName) {
+          _studentStopLocation = pos;
+        }
+      }
+
+      setState(() {
+        _stopMarkers = markers;
+
+        _polylines = {
+          Polyline(
+            polylineId: const PolylineId("static_route"),
+            points: routeLine,
+            width: 4,
+            color: Colors.blue,
+          )
+        };
+      });
+    });
   }
-
-
-
-  // BUS LISTENER (🔥 FIXED PATH HERE)
+  // BUS LISTENER
   Future<void> _listenBusRealtime() async {
-
-    if(busId == null) return;
+    if (busId == null) return;
 
     var connectivity =
     await Connectivity().checkConnectivity();
 
-    if(connectivity ==
-        ConnectivityResult.none) return;
+    if (connectivity == ConnectivityResult.none) return;
 
+    _busListener = FirebaseDatabase.instance
+        .ref("buses/$busId/current")
+        .onValue
+        .listen((event) {
 
-    _busListener =
-        FirebaseDatabase.instance
-            .ref("buses/$busId/current")
-            .onValue
-            .listen((event){
+      final data = event.snapshot.value;
+      if (data == null) {
+        print("No bus data found");
+        return;
+      }
 
-          final data =
-              event.snapshot.value;
+      final map =
+      Map<String, dynamic>.from(data as Map);
 
-          if(data == null){
+      double lat =
+      (map["lat"] as num).toDouble();
 
-            print("No bus data found");
+      double lng =
+      (map["lng"] as num).toDouble();
 
-            return;
+      double bearing =
+      (map["bearing"] ?? 0).toDouble();
 
-          }
+      LatLng busPos =
+      LatLng(lat, lng);
 
-          final map =
-          Map<String,dynamic>.from(data as Map);
+      setState(() {
+        _busLocation = busPos;
 
-          double lat =
-          (map["lat"] as num).toDouble();
+        _busMarker = Marker(
+          markerId: const MarkerId("bus"),
+          position: busPos,
+          icon: _busIcon ??
+              BitmapDescriptor.defaultMarker,
+          rotation: bearing,
+          anchor: const Offset(0.5, 0.5),
+        );
+      });
 
-          double lng =
-          (map["lng"] as num).toDouble();
+      _mapController?.animateCamera(
+        CameraUpdate.newLatLng(busPos),
+      );
 
-          double bearing =
-          (map["bearing"] ?? 0).toDouble();
-
-          LatLng busPos =
-          LatLng(lat,lng);
-
-          _routePoints.add(busPos);
-
-          _polylines.clear();
-
-          _polylines.add(
-
-            Polyline(
-
-              polylineId:
-              const PolylineId("route"),
-
-              points: _routePoints,
-
-              width:5,
-
-              color: Colors.blue,
-
-            ),
-
-          );
-
-
-          setState(() {
-
-            _busLocation = busPos;
-
-            _busMarker = Marker(
-
-              markerId:
-              const MarkerId("bus"),
-
-              position: busPos,
-
-              icon: _busIcon ??
-                  BitmapDescriptor.defaultMarker,
-
-              rotation: bearing,
-
-              anchor:
-              const Offset(0.5,0.5),
-
-            );
-
-          });
-
-
-          _mapController?.animateCamera(
-              CameraUpdate.newLatLng(busPos));
-
-          calculateETA();
-
-        });
-
+      calculateETA();
+    });
   }
-
-
 
   // ETA CALCULATION
-  void calculateETA(){
+  void calculateETA() {
+    if (_busLocation == null || _studentStopLocation == null) return;
 
-    if(_busLocation == null ||
-        _studentStopLocation == null) return;
-
-    double distance =
-    Geolocator.distanceBetween(
-
+    double distance = Geolocator.distanceBetween(
       _busLocation!.latitude,
       _busLocation!.longitude,
-
       _studentStopLocation!.latitude,
       _studentStopLocation!.longitude,
-
     );
 
-    double speed =
-        30 * 1000 / 3600;
-
-    double time =
-        distance / speed;
+    double speed = 30 * 1000 / 3600; // 30 km/h
+    double time = distance / speed;
 
     setState(() {
-
-      etaMinutes =
-          (time/60).ceilToDouble();
-
+      etaMinutes = (time / 60).ceilToDouble();
     });
-
   }
-
-
 
   @override
   Widget build(BuildContext context) {
-
     return Scaffold(
-
-      appBar:
-      AppBar(title:
-      const Text("Live Bus Map")),
-
-      body:
-
-      Stack(
-
+      appBar: AppBar(title: const Text("Live Bus Map")),
+      body: Stack(
         children: [
-
           GoogleMap(
-
-            initialCameraPosition:
-            CameraPosition(
+            initialCameraPosition: CameraPosition(
               target: _studentLocation,
               zoom: 14,
             ),
-
-            onMapCreated:
-                (controller){
-
-              _mapController =
-                  controller;
-
+            onMapCreated: (controller) {
+              _mapController = controller;
             },
-
             myLocationEnabled: true,
-
             markers: {
-
-              if(_busMarker != null)
-                _busMarker!,
-
-              if(_studentMarker != null)
-                _studentMarker!,
-
+              if (_busMarker != null) _busMarker!,
+              if (_studentMarker != null) _studentMarker!,
               ..._stopMarkers,
-
             },
-
-            polylines:
-            _polylines,
-
+            polylines: _polylines,
           ),
-
-
-
-          if(etaMinutes != null)
-
+          if (etaMinutes != null)
             Positioned(
-
-              top:20,
-              left:20,
-              right:20,
-
-              child:
-
-              Container(
-
-                padding:
-                const EdgeInsets.all(12),
-
-                decoration:
-                BoxDecoration(
-
-                  color:
-                  Colors.black87,
-
-                  borderRadius:
-                  BorderRadius.circular(10),
-
+              top: 20,
+              left: 20,
+              right: 20,
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(10),
                 ),
-
-                child:
-
-                Text(
-
+                child: Text(
                   "Bus arriving in ${etaMinutes!.toInt()} mins",
-
-                  style:
-                  const TextStyle(
-                      color: Colors.white,
-                      fontSize:16),
-
-                  textAlign:
-                  TextAlign.center,
-
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                  ),
+                  textAlign: TextAlign.center,
                 ),
-
               ),
-
             ),
-
         ],
-
       ),
-
     );
-
   }
-
-
 
   @override
-  void dispose(){
-
+  void dispose() {
     _busListener?.cancel();
-
     _stopListener?.cancel();
-
     super.dispose();
-
   }
-
 }

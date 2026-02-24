@@ -49,28 +49,24 @@ class _StudentHomePageState extends State<StudentHomePage> {
   }
   Future<void> _initializeStudent() async {
 
-    // 1️⃣ Load fresh profile from backend
+    // Load fresh profile from backend
     await _refreshStudentProfile();
 
-    // 2️⃣ Load student info into state
+    //  Load student info into state
     await _loadStudentInfo();
 
-    // 3️⃣ Subscribe to original bus topic
-    if (busId != null) {
-      await _subscribeToRoute();
-    }
 
-    // 4️⃣ Request notification permission
+    // Request notification permission
     await _requestPermission();
 
-    // 5️⃣ Attach listeners
+    // Attach listeners
     _listenForMessages();
     _listenToNotifications();
     _listenToBusIssues();
     _listenToBus();
     _listenToTemporaryBus();
 
-    // 6️⃣ Start GPS tracking
+    // Start GPS tracking
     _startLocationTracking();
   }
   void _startLocationTracking() {
@@ -118,13 +114,16 @@ class _StudentHomePageState extends State<StudentHomePage> {
       final data = jsonDecode(response.body);
       final newBusId = data["busId"];
 
-      // 🔥 If bus changed → unsubscribe old topic
+      print("STUDENT BUS ID FROM BACKEND = $newBusId");
+      print("OLD BUS ID = $oldBusId");
+
       if (oldBusId != null && oldBusId != newBusId) {
+        print("Unsubscribing from old topic: ${oldBusId.toLowerCase()}");
         await FirebaseMessaging.instance
             .unsubscribeFromTopic(oldBusId.toLowerCase());
       }
 
-      // 🔥 Subscribe new topic
+      print("Subscribing to new topic: ${newBusId.toLowerCase()}");
       await FirebaseMessaging.instance
           .subscribeToTopic(newBusId.toLowerCase());
 
@@ -158,7 +157,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
     }
 
     String? token = await FirebaseMessaging.instance.getToken();
-    print("🔥 FCM TOKEN: $token");
+    print("🔥 FCM TOKEN AFTER PROFILE LOAD: $token");
   }
 
   Future<void> _requestPermission() async {
@@ -267,7 +266,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
       ),
     );
   }
-  //=================Temporary Bus Change Listener==================
+//=================Temporary Bus Change Listener==================
   Future<void> _listenToTemporaryBus() async {
     final prefs = await SharedPreferences.getInstance();
     final String? originalBusId = prefs.getString("busId");
@@ -278,6 +277,8 @@ class _StudentHomePageState extends State<StudentHomePage> {
     }
 
     print("👂 Listening to temporaryBusChanges/${originalBusId.toUpperCase()}");
+
+    _tempBusListener?.cancel();
 
     _tempBusListener = FirebaseDatabase.instance
         .ref("temporaryBusChanges/${originalBusId.toUpperCase()}")
@@ -293,21 +294,28 @@ class _StudentHomePageState extends State<StudentHomePage> {
         final String? tempRoute = data["tempRoute"];
 
         print("🚍 TEMP BUS ACTIVE");
-        print("Original topic remains subscribed: ${originalBusId.toLowerCase()}");
-        print("Subscribing to temp bus: ${newBus?.toLowerCase()}");
 
-        // 🔥 DO NOT unsubscribe original topic
+        // 🔥 1️⃣ Unsubscribe old temp topic (if switching)
+        if (tempBus != null && tempBus != newBus) {
+          print("Unsubscribing old temp topic: ${tempBus!.toLowerCase()}");
+          await FirebaseMessaging.instance
+              .unsubscribeFromTopic(tempBus!.toLowerCase());
+        }
 
+        // 🔥 2️⃣ Subscribe new temp topic
         if (newBus != null && tempBus != newBus) {
+          print("Subscribing to new temp topic: ${newBus.toLowerCase()}");
           await FirebaseMessaging.instance
               .subscribeToTopic(newBus.toLowerCase());
         }
 
+        // 🔥 3️⃣ Update state AFTER topic handling
         setState(() {
           tempBus = newBus;
           displayRoute = tempRoute ?? routeName;
         });
 
+        // 🔥 4️⃣ Re-attach listeners for new bus
         await _listenToBus();
         await _listenToBusIssues();
       }
@@ -317,9 +325,9 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
         print("🔄 TEMP BUS CLEARED");
 
-        // 🔥 Unsubscribe from temp topic only
+        // 🔥 Unsubscribe from temp topic if exists
         if (tempBus != null) {
-          print("Unsubscribing from temp bus: ${tempBus!.toLowerCase()}");
+          print("Unsubscribing temp topic: ${tempBus!.toLowerCase()}");
           await FirebaseMessaging.instance
               .unsubscribeFromTopic(tempBus!.toLowerCase());
         }
@@ -1089,7 +1097,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     );
   }
 }
-    class NotificationCard extends StatelessWidget {
+class NotificationCard extends StatelessWidget {
   final String title;
   final String message;
   final String time;
@@ -1110,86 +1118,86 @@ class _NotificationsPageState extends State<NotificationsPage> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-          ),
-        ],
-      ),
-      child:Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.15),
-              shape: BoxShape.circle,
+        margin: const EdgeInsets.only(bottom: 14),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
             ),
-            child: Icon(icon, color: color),
-          ),
-          const SizedBox(width: 12),
+          ],
+        ),
+        child:Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.15),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color),
+            ),
+            const SizedBox(width: 12),
 
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight:
-                          isRead ? FontWeight.w500 : FontWeight.w700,
-                          color: Colors.black,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight:
+                            isRead ? FontWeight.w500 : FontWeight.w700,
+                            color: Colors.black,
+                          ),
                         ),
                       ),
+
+                      if (!isRead)
+                        Container(
+                          width: 8,
+                          height: 8,
+                          margin: const EdgeInsets.only(left: 6),
+                          decoration: const BoxDecoration(
+                            color: Colors.blue,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 4),
+
+                  Text(
+                    message,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Colors.black87,
                     ),
-
-                    if (!isRead)
-                      Container(
-                        width: 8,
-                        height: 8,
-                        margin: const EdgeInsets.only(left: 6),
-                        decoration: const BoxDecoration(
-                          color: Colors.blue,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                  ],
-                ),
-
-                const SizedBox(height: 4),
-
-                Text(
-                  message,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Colors.black87,
                   ),
-                ),
 
-                const SizedBox(height: 6),
+                  const SizedBox(height: 6),
 
-                Text(
-                  time,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.black54,
+                  Text(
+                    time,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.black54,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
-      )
+          ],
+        )
     );
   }
 }
