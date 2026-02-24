@@ -80,12 +80,26 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
 
     if (busId == null) return;
 
+    // 1️⃣ Update Firebase DB
     await FirebaseDatabase.instance
         .ref("busIssues/$busId")
         .update({
       "status": "CLEARED",
       "clearedAt": ServerValue.timestamp,
     });
+
+    // 2️⃣ Call backend to send CLEAR notification
+    try {
+      await http.post(
+        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/clear-issue"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "busId": busId,
+        }),
+      );
+    } catch (e) {
+      print("Clear notification error: $e");
+    }
 
     setState(() {
       activeIssue = null;
@@ -98,7 +112,6 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
       ),
     );
   }
-
   // ================= UI ==============================================
   @override
   Widget build(BuildContext context) {
