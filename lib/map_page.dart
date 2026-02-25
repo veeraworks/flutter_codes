@@ -84,8 +84,9 @@ class _MapPageState extends State<MapPage> {
   Future<void> _loadBusIcon() async {
     _busIcon = await BitmapDescriptor.fromAssetImage(
       const ImageConfiguration(size: Size(48, 48)),
-      "assets/images/bus.png",
+      "assets/images/maps_icon.png",
     );
+
   }
 
   // STOPS LISTENER
