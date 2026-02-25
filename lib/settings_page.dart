@@ -1,3 +1,4 @@
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -185,12 +186,27 @@ class _SettingsPageState extends State<SettingsPage> {
             onPressed: () async {
               Navigator.pop(context);
 
+              final prefs = await SharedPreferences.getInstance();
+
+              final oldBusId = prefs.getString("busId");
+
+              // 🔥 UNSUBSCRIBE FROM FCM TOPIC
+              if (oldBusId != null && oldBusId.isNotEmpty) {
+                await FirebaseMessaging.instance
+                    .unsubscribeFromTopic(oldBusId.toLowerCase());
+              }
+
+              // 🔥 CLEAR ALL SAVED SESSION DATA
+              await prefs.clear();
+
+              // 🔥 SIGN OUT FROM FIREBASE
               await FirebaseAuth.instance.signOut();
 
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(
-                    builder: (_) => const WelcomePage()),
+                  builder: (_) => const WelcomePage(),
+                ),
                     (route) => false,
               );
             },

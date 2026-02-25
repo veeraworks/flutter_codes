@@ -14,13 +14,12 @@ class TemporaryBusChangePage extends StatefulWidget {
 
 class _TemporaryBusChangePageState
     extends State<TemporaryBusChangePage> {
-  final TextEditingController busController =
-  TextEditingController();
 
   String currentBus = "-";
   String currentRoute = "-";
   String selectedRoute = "";
   bool isTempActive = false; // 🔥 KEY FLAG
+  String selectedBus = "";
 
   final List<String> routes = [
     "Ashok Pillar",
@@ -34,6 +33,8 @@ class _TemporaryBusChangePageState
     "Padappai",
     "Guduvanchery"
   ];
+  final List<String> busNumbers =
+  List.generate(20, (index) => "BUS${(index + 1).toString().padLeft(2, '0')}");
 
   @override
   void initState() {
@@ -58,6 +59,7 @@ class _TemporaryBusChangePageState
       currentBus = savedBus;
       currentRoute = savedRoute;
       selectedRoute = savedRoute;
+      selectedBus = savedBus;
     });
 
     if (!prefs.containsKey("originalBusNumber")) {
@@ -81,9 +83,8 @@ class _TemporaryBusChangePageState
       return;
     }
 
-    final String newBus = busController.text.trim().isNotEmpty
-        ? busController.text.trim()
-        : originalBus;
+    final String newBus =
+    selectedBus.isNotEmpty ? selectedBus : originalBus;
 
     try {
       // ✅ UPDATE LOCAL STORAGE
@@ -117,8 +118,6 @@ class _TemporaryBusChangePageState
         currentBus = newBus;
         currentRoute = selectedRoute;
       });
-
-      busController.clear();
 
       if (!mounted) return;
 
@@ -257,14 +256,21 @@ class _TemporaryBusChangePageState
                   ),
                   const SizedBox(height: 12),
 
-                  TextField(
-                    controller: busController,
-                    keyboardType: TextInputType.number,
+                  DropdownButtonFormField<String>(
+                    value: selectedBus.isNotEmpty ? selectedBus : null,
+                    items: busNumbers
+                        .map((bus) => DropdownMenuItem(
+                      value: bus,
+                      child: Text(bus),
+                    ))
+                        .toList(),
+                    onChanged: (val) {
+                      setState(() => selectedBus = val ?? "");
+                    },
                     decoration: InputDecoration(
-                      hintText: "Enter new bus number",
+                      hintText: "Select Bus Number",
                       border: OutlineInputBorder(
-                        borderRadius:
-                        BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(14),
                       ),
                     ),
                   ),

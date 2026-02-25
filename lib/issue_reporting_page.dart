@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
@@ -13,6 +14,7 @@ class IssueReportingPage extends StatefulWidget {
 
 class _IssueReportingPageState extends State<IssueReportingPage> {
   String? activeIssue;
+  StreamSubscription<DatabaseEvent>? _issueListener;
 
   final List<Map<String, dynamic>> issues = [
     {"title": "Bus Breakdown", "icon": Icons.build, "color": Colors.red},
@@ -22,6 +24,51 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
     {"title": "Heavy Traffic", "icon": Icons.traffic, "color": Colors.blue},
     {"title": "Delay", "icon": Icons.schedule, "color": Colors.purple},
   ];
+
+  // ================= INIT =================
+  @override
+  void initState() {
+    super.initState();
+    _listenToActiveIssue();
+  }
+
+  @override
+  void dispose() {
+    _issueListener?.cancel();
+    super.dispose();
+  }
+
+  // ================= REAL-TIME LISTENER =================
+  Future<void> _listenToActiveIssue() async {
+    final prefs = await SharedPreferences.getInstance();
+    final busId = prefs.getString("busId");
+
+    if (busId == null) return;
+
+    _issueListener?.cancel();
+
+    _issueListener = FirebaseDatabase.instance
+        .ref("busIssues/$busId")
+        .onValue
+        .listen((event) {
+      final data = event.snapshot.value;
+
+      if (data == null) {
+        setState(() => activeIssue = null);
+        return;
+      }
+
+      final map = Map<String, dynamic>.from(data as Map);
+
+      if (map["status"] == "ACTIVE") {
+        setState(() {
+          activeIssue = map["issueType"];
+        });
+      } else {
+        setState(() => activeIssue = null);
+      }
+    });
+  }
 
   // ================= REPORT ISSUE =================
   Future<void> reportIssue(String issue) async {
@@ -36,10 +83,7 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
       return;
     }
 
-    // 1️⃣ Save issue in database
-    await FirebaseDatabase.instance
-        .ref("busIssues/$busId")
-        .set({
+    await FirebaseDatabase.instance.ref("busIssues/$busId").set({
       "issueType": issue,
       "route": routeName,
       "status": "ACTIVE",
@@ -47,10 +91,10 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
       "clearedAt": null,
     });
 
-    // 2️⃣ Call backend to send notification
     try {
       await http.post(
-        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/report-issue"),
+        Uri.parse(
+            "https://null-sheldon-unstudded.ngrok-free.dev/drivers/report-issue"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "busId": busId,
@@ -60,10 +104,6 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
     } catch (e) {
       print("Notification error: $e");
     }
-
-    setState(() {
-      activeIssue = issue;
-    });
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -80,30 +120,21 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
 
     if (busId == null) return;
 
-    // 1️⃣ Update Firebase DB
-    await FirebaseDatabase.instance
-        .ref("busIssues/$busId")
-        .update({
+    await FirebaseDatabase.instance.ref("busIssues/$busId").update({
       "status": "CLEARED",
       "clearedAt": ServerValue.timestamp,
     });
 
-    // 2️⃣ Call backend to send CLEAR notification
     try {
       await http.post(
-        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/clear-issue"),
+        Uri.parse(
+            "https://null-sheldon-unstudded.ngrok-free.dev/drivers/clear-issue"),
         headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "busId": busId,
-        }),
+        body: jsonEncode({"busId": busId}),
       );
     } catch (e) {
       print("Clear notification error: $e");
     }
-
-    setState(() {
-      activeIssue = null;
-    });
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -112,7 +143,8 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
       ),
     );
   }
-  // ================= UI ==============================================
+
+  // ================= UI =================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -122,13 +154,14 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
         backgroundColor: const Color(0xFF00BFA6),
         foregroundColor: Colors.white,
       ),
+
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
 
-            // 🚨 ACTIVE ISSUE BANNER
+            // ACTIVE ISSUE BANNER
             if (activeIssue != null) ...[
               Container(
                 width: double.infinity,
@@ -157,29 +190,6 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: ElevatedButton.icon(
-                        onPressed: clearIssue,
-                        icon: const Icon(Icons.check_circle,
-                            color: Colors.white),
-                        label: const Text(
-                          "CLEAR ALERT",
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -188,71 +198,83 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
 
             const Text(
               "Report an Issue",
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
 
             const SizedBox(height: 12),
 
-            // 🔘 ISSUE BUTTONS
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: issues.length,
-              gridDelegate:
-              const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                childAspectRatio: 1.4,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-              ),
-              itemBuilder: (context, index) {
-                final issue = issues[index];
-                final bool isDisabled = activeIssue != null;
+            Expanded(
+              child: GridView.builder(
+                itemCount: issues.length,
+                gridDelegate:
+                const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  childAspectRatio: 1.4,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                ),
+                itemBuilder: (context, index) {
+                  final issue = issues[index];
+                  final bool isDisabled = activeIssue != null;
 
-                return GestureDetector(
-                  onTap: isDisabled
-                      ? null
-                      : () => reportIssue(issue["title"]),
-                  child: Opacity(
-                    opacity: isDisabled ? 0.4 : 1,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(18),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.05),
-                            blurRadius: 10,
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            issue["icon"],
-                            size: 36,
-                            color: issue["color"],
-                          ),
-                          const SizedBox(height: 10),
-                          Text(
-                            issue["title"],
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w600,
+                  return GestureDetector(
+                    onTap:
+                    isDisabled ? null : () => reportIssue(issue["title"]),
+                    child: Opacity(
+                      opacity: isDisabled ? 0.4 : 1,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(18),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 10,
                             ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
+                          ],
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(issue["icon"],
+                                size: 36, color: issue["color"]),
+                            const SizedBox(height: 10),
+                            Text(issue["title"],
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w600)),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
           ],
+        ),
+      ),
+
+      // CLEAR BUTTON (ALWAYS VISIBLE)
+      bottomNavigationBar: Padding(
+        padding: const EdgeInsets.all(16),
+        child: SizedBox(
+          height: 55,
+          child: ElevatedButton.icon(
+            onPressed: activeIssue != null ? clearIssue : null,
+            icon: const Icon(Icons.check_circle, color: Colors.white),
+            label: Text(
+              activeIssue != null ? "CLEAR ALERT" : "NO ACTIVE ALERT",
+              style: const TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor:
+              activeIssue != null ? Colors.red : Colors.grey,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+          ),
         ),
       ),
     );
