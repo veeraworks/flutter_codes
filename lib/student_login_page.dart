@@ -5,6 +5,7 @@ import 'student_home_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'student_otp_page.dart';
 import 'student_signup_page.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class StudentLoginPage extends StatefulWidget {
   const StudentLoginPage({super.key});
@@ -18,7 +19,7 @@ class _StudentLoginPageState extends State<StudentLoginPage>
 
   final TextEditingController idController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
-
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   bool _obscurePassword = false;
 
   late AnimationController _shakeController;
@@ -77,14 +78,35 @@ class _StudentLoginPageState extends State<StudentLoginPage>
 
       if (response.statusCode == 200 && data["student"] != null) {
 
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => StudentOtpPage(
-              studentId: studentId,
-              phoneNumber: mobileNumber,
-            ),
-          ),
+        await _auth.verifyPhoneNumber(
+          phoneNumber: "+91$mobileNumber",
+
+          verificationCompleted: (credential) async {
+            await _auth.signInWithCredential(credential);
+          },
+
+          verificationFailed: (e) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(e.message ?? "OTP failed")),
+            );
+          },
+
+          codeSent: (vid, token) {
+
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => StudentOtpPage(
+                  verificationId: vid,
+                  regNo: studentId,
+                  phoneNumber: mobileNumber,
+                  isSignup: false, // 🔥 LOGIN FLOW
+                ),
+              ),
+            );
+          },
+
+          codeAutoRetrievalTimeout: (vid) {},
         );
 
       } else {
