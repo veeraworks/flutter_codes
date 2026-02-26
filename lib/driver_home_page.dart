@@ -425,7 +425,10 @@ class _DriverHomePageState extends State<DriverHomePage> {
     final response = await http.post(
       Uri.parse(
           "https://null-sheldon-unstudded.ngrok-free.dev/drivers/end-trip"),
-      headers: {"Content-Type": "application/json"},
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": "smartbus_2026_secure"
+      },
       body: jsonEncode({
         "busId": busId,
         "tripId": currentTripId,

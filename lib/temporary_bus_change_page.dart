@@ -18,7 +18,7 @@ class _TemporaryBusChangePageState
   String currentBus = "-";
   String currentRoute = "-";
   String selectedRoute = "";
-  bool isTempActive = false; // 🔥 KEY FLAG
+  bool isTempActive = false;
   String selectedBus = "";
 
   final List<String> routes = [
@@ -105,7 +105,10 @@ class _TemporaryBusChangePageState
       // ✅ CALL BACKEND (SEND NOTIFICATION)
       await http.post(
         Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/temporary-bus"),
-        headers: {"Content-Type": "application/json"},
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": "smartbus_2026_secure",
+        },
         body: jsonEncode({
           "busId": busId,
           "tempBusNumber": newBus,
@@ -173,7 +176,10 @@ class _TemporaryBusChangePageState
       // ✅ CALL BACKEND (NOTIFY RESTORE)
       await http.post(
         Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/temporary-bus"),
-        headers: {"Content-Type": "application/json"},
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": "smartbus_2026_secure",
+        },
         body: jsonEncode({
           "busId": busId,
           "active": false,

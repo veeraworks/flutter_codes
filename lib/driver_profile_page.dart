@@ -72,9 +72,8 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                   const SizedBox(height: 16),
 
                   _ProfileRow("Name", driverName),
-                  _ProfileRow("Bus ID", busId),
+                  _ProfileRow("Bus Number", busId),
                   _ProfileRow("Route", routeName),
-                  _ProfileRow("Bus Number", busNumber),
                   _ProfileRow("Phone", phoneNumber),
                 ],
               ),
