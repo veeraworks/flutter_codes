@@ -2,7 +2,7 @@
   import 'package:flutter/material.dart';
   import 'package:firebase_auth/firebase_auth.dart';
   import 'package:firebase_database/firebase_database.dart';
-  import 'package:http/http.dart' as http;
+  import 'service/api_service.dart';
   import 'package:shared_preferences/shared_preferences.dart';
   import 'package:firebase_messaging/firebase_messaging.dart';
   import 'student_home_page.dart';
@@ -56,12 +56,11 @@
         return;
       }
       try {
-        final response = await http.post(
-          Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/check-student"),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({
+        final response = await ApiService.post(
+          "/check-student",
+          {
             "registerNumber": regController.text.trim(),
-          }),
+          },
         );
 
         final data = jsonDecode(response.body);
@@ -152,12 +151,11 @@
   //to pre-fill the route and stop dropdowns
     Future<void> fetchStudentDetails(String registerNumber) async {
       try {
-        final response = await http.post(
-          Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/get-student-by-reg"),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({
+        final response = await ApiService.post(
+          "/get-student-by-reg",
+          {
             "registerNumber": registerNumber,
-          }),
+          },
         );
 
         if (response.statusCode == 200) {
@@ -214,15 +212,14 @@
         await _auth.signInWithCredential(credential);
 
         // 🔥 CALL BACKEND COMPLETE SIGNUP
-        final response = await http.post(
-          Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/complete-signup"),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({
+        final response = await ApiService.post(
+          "/students/complete-signup",
+          {
             "regNo": regController.text.trim(),
             "department": selectedDepartment,
             "routeName": selectedRoute,
             "boardingPoint": selectedBoardingPoint,
-          }),
+          },
         );
 
         if (response.statusCode == 200) {

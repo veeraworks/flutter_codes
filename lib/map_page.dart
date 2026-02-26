@@ -90,7 +90,7 @@ class _MapPageState extends State<MapPage> {
 
   Future<void> _loadBusIcon() async {
     _busIcon = await BitmapDescriptor.fromAssetImage(
-      const ImageConfiguration(size: Size(48, 48)),
+      const ImageConfiguration(size: Size(100, 100)),
       "assets/images/bus.png",
     );
   }
@@ -156,32 +156,37 @@ class _MapPageState extends State<MapPage> {
 
         routeLine.add(pos);
 
+        bool isStudentStop = stop["name"] == stopName;
+
         markers.add(
           Marker(
             markerId: MarkerId(stop["name"]),
             position: pos,
             infoWindow: InfoWindow(title: stop["name"]),
             icon: BitmapDescriptor.defaultMarkerWithHue(
-              BitmapDescriptor.hueOrange,
+              isStudentStop
+                  ? BitmapDescriptor.hueGreen   // ✅ Student stop
+                  : BitmapDescriptor.hueOrange, // Other stops
             ),
           ),
         );
 
-        if (stop["name"] == stopName) {
+        if (isStudentStop) {
           _studentStopLocation = pos;
         }
       }
-
       setState(() {
-        _stopMarkers = markers;
-        _polylines = {
+        _polylines.removeWhere(
+                (p) => p.polylineId.value == "route");
+
+        _polylines.add(
           Polyline(
             polylineId: const PolylineId("route"),
             points: routeLine,
-            width: 5,
-            color: Colors.blue,
-          )
-        };
+            width: 4,
+            color: Colors.grey, // Grey base route
+          ),
+        );
       });
 
       _fitRouteToScreen(routeLine);
@@ -257,6 +262,7 @@ class _MapPageState extends State<MapPage> {
               icon: _busIcon ?? BitmapDescriptor.defaultMarker,
               rotation: bearing,
               anchor: const Offset(0.5, 0.5),
+              flat: true,
             );
           });
 
@@ -303,14 +309,17 @@ class _MapPageState extends State<MapPage> {
 
         // ✅ Draw real road
         setState(() {
-          _polylines = {
+          _polylines.removeWhere(
+                  (p) => p.polylineId.value == "roadRoute");
+
+          _polylines.add(
             Polyline(
               polylineId: const PolylineId("roadRoute"),
               points: decodedPoints,
               width: 5,
-              color: Colors.blue,
-            )
-          };
+              color: Colors.blue, // Real road
+            ),
+          );
         });
       }
     } catch (e) {

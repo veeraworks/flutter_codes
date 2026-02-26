@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'service/api_service.dart';
 import 'package:flutter/material.dart';
 import 'student_home_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -65,13 +65,12 @@ class _StudentLoginPageState extends State<StudentLoginPage>
     }
 
     try {
-      final response = await http.post(
-        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/check-student"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
+      final response = await ApiService.post(
+        "/students/check-student",
+        {
           "regNo": studentId,
           "phone": mobileNumber,
-        }),
+        },
       );
 
       final data = jsonDecode(response.body);
