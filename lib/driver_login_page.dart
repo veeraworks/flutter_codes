@@ -1,9 +1,8 @@
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'service/api_service.dart';
 import 'driver_otp_page.dart';
 
 class DriverLoginPage extends StatefulWidget {
@@ -65,10 +64,11 @@ class _DriverLoginPageState extends State<DriverLoginPage>
     });
 
     try {
-      final response = await http.post(
-        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/check-driver"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"phone": phone}),
+      final response = await ApiService.post(
+        "/drivers/check-driver",
+        {
+          "phone": phone,
+        },
       ).timeout(const Duration(seconds: 8));
 
       final data = jsonDecode(response.body);

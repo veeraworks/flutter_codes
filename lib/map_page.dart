@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'service/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:http/http.dart' as http;
@@ -90,7 +91,7 @@ class _MapPageState extends State<MapPage> {
 
   Future<void> _loadBusIcon() async {
     _busIcon = await BitmapDescriptor.fromAssetImage(
-      const ImageConfiguration(size: Size(48, 48)),
+      const ImageConfiguration(size: Size(100, 100)),
       "assets/images/bus.png",
     );
   }
@@ -121,6 +122,7 @@ class _MapPageState extends State<MapPage> {
   }
 
   // ================= ROUTE FROM FIREBASE =================
+
   Future<void> _listenStopsRealtime() async {
     if (busId == null) return;
 
@@ -128,33 +130,73 @@ class _MapPageState extends State<MapPage> {
         .ref("busRoutes/$busId")
         .onValue
         .listen((event) {
+
       if (!event.snapshot.exists) return;
 
       Map data = event.snapshot.value as Map;
 
+      // ================= FULL ROAD POLYLINE =================
+      final polylineString = data["fullRoadPolyline"];
+
+      if (polylineString != null &&
+          polylineString.toString().isNotEmpty) {
+
+        PolylinePoints polylinePoints = PolylinePoints();
+
+        List<PointLatLng> result =
+        polylinePoints.decodePolyline(polylineString);
+
+        if (result.isNotEmpty) {
+
+          List<LatLng> decodedPoints = result
+              .map((p) => LatLng(p.latitude, p.longitude))
+              .toList();
+
+          setState(() {
+            _polylines.removeWhere(
+                    (p) => p.polylineId.value == "route");
+
+            _polylines.add(
+              Polyline(
+                polylineId: const PolylineId("route"),
+                points: decodedPoints,
+                width: 4,
+                color: Colors.grey,
+              ),
+            );
+          });
+
+          _fitRouteToScreen(decodedPoints);
+        }
+      }
+
+      // ================= STOPS =================
       List<Map> stopsList = [];
 
       data.forEach((key, value) {
-        stopsList.add({
-          "name": key,
-          "lat": value["lat"],
-          "lng": value["lng"],
-          "order": value["stopOrder"] ?? 0
-        });
+        if (value is Map && value["lat"] != null) {
+          stopsList.add({
+            "name": key,
+            "lat": value["lat"],
+            "lng": value["lng"],
+            "order": value["stopOrder"] ?? 0
+          });
+        }
       });
 
-      stopsList.sort((a, b) => a["order"].compareTo(b["order"]));
+      stopsList.sort((a, b) =>
+          (a["order"] as int).compareTo(b["order"] as int));
 
-      List<LatLng> routeLine = [];
       Set<Marker> markers = {};
 
       for (var stop in stopsList) {
+
         LatLng pos = LatLng(
           (stop["lat"] as num).toDouble(),
           (stop["lng"] as num).toDouble(),
         );
 
-        routeLine.add(pos);
+        bool isStudentStop = stop["name"] == stopName;
 
         markers.add(
           Marker(
@@ -162,29 +204,22 @@ class _MapPageState extends State<MapPage> {
             position: pos,
             infoWindow: InfoWindow(title: stop["name"]),
             icon: BitmapDescriptor.defaultMarkerWithHue(
-              BitmapDescriptor.hueOrange,
+              isStudentStop
+                  ? BitmapDescriptor.hueGreen
+                  : BitmapDescriptor.hueOrange,
             ),
           ),
         );
 
-        if (stop["name"] == stopName) {
+        if (isStudentStop) {
           _studentStopLocation = pos;
         }
       }
 
+      // ✅ Assign AFTER loop
       setState(() {
         _stopMarkers = markers;
-        _polylines = {
-          Polyline(
-            polylineId: const PolylineId("route"),
-            points: routeLine,
-            width: 5,
-            color: Colors.blue,
-          )
-        };
       });
-
-      _fitRouteToScreen(routeLine);
     });
   }
 
@@ -214,7 +249,6 @@ class _MapPageState extends State<MapPage> {
       _busLocation = newPos;
 
       _animateBus(newPos, bearing);
-      _fetchETAFromBackend();
 
       if (_followBus) {
         _mapController?.animateCamera(
@@ -257,6 +291,7 @@ class _MapPageState extends State<MapPage> {
               icon: _busIcon ?? BitmapDescriptor.defaultMarker,
               rotation: bearing,
               anchor: const Offset(0.5, 0.5),
+              flat: true,
             );
           });
 
@@ -271,48 +306,60 @@ class _MapPageState extends State<MapPage> {
   Future<void> _fetchETAFromBackend() async {
     if (_busLocation == null || _studentStopLocation == null) return;
 
-    final url = Uri.parse(
-      "https://null-sheldon-unstudded.ngrok-free.dev/drivers/eta"
-          "?originLat=${_busLocation!.latitude}"
-          "&originLng=${_busLocation!.longitude}"
-          "&destLat=${_studentStopLocation!.latitude}"
-          "&destLng=${_studentStopLocation!.longitude}",
-    );
-
     try {
-      final response = await http.get(url);
+      final response = await ApiService.get(
+        "/drivers/eta"
+            "?originLat=${_busLocation!.latitude}"
+            "&originLng=${_busLocation!.longitude}"
+            "&destLat=${_studentStopLocation!.latitude}"
+            "&destLng=${_studentStopLocation!.longitude}",
+      ).timeout(const Duration(seconds: 8));
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+      if (response.statusCode != 200) return;
 
-        // ✅ Update ETA
+      final data = jsonDecode(response.body);
+
+      // ================= ETA =================
+      if (data["durationValue"] != null) {
         setState(() {
           etaMinutes =
-              (data["durationValue"] / 60).ceilToDouble();
+              ((data["durationValue"] as num) / 60).ceilToDouble();
         });
+      }
 
-        // ✅ Decode road polyline
+      // ================= ROAD POLYLINE =================
+      final polylineString = data["polyline"];
+
+      if (polylineString != null &&
+          polylineString.toString().isNotEmpty) {
+
         PolylinePoints polylinePoints = PolylinePoints();
 
         List<PointLatLng> result =
-        polylinePoints.decodePolyline(data["polyline"]);
+        polylinePoints.decodePolyline(polylineString);
 
-        List<LatLng> decodedPoints = result
-            .map((p) => LatLng(p.latitude, p.longitude))
-            .toList();
+        if (result.isNotEmpty) {
 
-        // ✅ Draw real road
-        setState(() {
-          _polylines = {
-            Polyline(
-              polylineId: const PolylineId("roadRoute"),
-              points: decodedPoints,
-              width: 5,
-              color: Colors.blue,
-            )
-          };
-        });
+          List<LatLng> decodedPoints = result
+              .map((p) => LatLng(p.latitude, p.longitude))
+              .toList();
+
+          setState(() {
+            _polylines.removeWhere(
+                    (p) => p.polylineId.value == "roadRoute");
+
+            _polylines.add(
+              Polyline(
+                polylineId: const PolylineId("roadRoute"),
+                points: decodedPoints,
+                width: 5,
+                color: Colors.blue,
+              ),
+            );
+          });
+        }
       }
+
     } catch (e) {
       print("ETA error: $e");
     }

@@ -2,10 +2,8 @@
   import 'package:flutter/material.dart';
   import 'package:firebase_auth/firebase_auth.dart';
   import 'package:firebase_database/firebase_database.dart';
-  import 'package:http/http.dart' as http;
-  import 'package:shared_preferences/shared_preferences.dart';
-  import 'package:firebase_messaging/firebase_messaging.dart';
-  import 'student_home_page.dart';
+  import 'service/api_service.dart';
+  import 'package:project_spt/student_otp_page.dart';
 
   class StudentSignupPage extends StatefulWidget {
     const StudentSignupPage({super.key});
@@ -19,15 +17,13 @@
     final TextEditingController nameController = TextEditingController();
     final TextEditingController regController = TextEditingController();
     final TextEditingController phoneController = TextEditingController();
-    final TextEditingController otpController = TextEditingController();
+    final TextEditingController routeController = TextEditingController();
+    final TextEditingController boardingController = TextEditingController();
 
     final FirebaseAuth _auth = FirebaseAuth.instance;
     final DatabaseReference _db = FirebaseDatabase.instance.ref("students");
 
-    bool otpSent = false;
     bool isLoading = false;
-    String verificationId = "";
-    bool isPreRegistered = false;
     bool isValidRegisterNumber = false;
     String? selectedRoute;
     String? selectedBoardingPoint;
@@ -37,83 +33,89 @@
     String? selectedDepartment;
 
     List<String> departmentList = [
-      "Mech",
-      "Civil",
-      "EEE",
-      "ECE",
-      "CSE",
-      "IoT",
+      "CSE FIRST YEAR",
+      "CSE SECOND YEAR",
+      "CSE THIRD YEAR",
+
+      "ECE FIRST YEAR",
+      "ECE SECOND YEAR",
+      "ECE THIRD YEAR",
+
+      "EEE FIRST YEAR",
+      "EEE SECOND YEAR",
+      "EEE THIRD YEAR",
+
+      "MECH FIRST YEAR",
+      "MECH SECOND YEAR",
+      "MECH THIRD YEAR",
+
+      "CIVIL FIRST YEAR",
+      "CIVIL SECOND YEAR",
+      "CIVIL THIRD YEAR",
+
+      "IOT FIRST YEAR",
+      "IOT SECOND YEAR",
+      "IOT THIRD YEAR",
     ];
-    List<String> routeList = [];
-    List<String> boardingPointList = [];
+
     //================= CHECK REGISTER NUMBER =================
     Future<void> checkRegisterNumber() async {
-
       if (regController.text.trim().isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Enter Register Number")),
         );
         return;
       }
+
       try {
-        final response = await http.post(
-          Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/check-student"),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({
-            "registerNumber": regController.text.trim(),
-          }),
+        final response = await ApiService.post(
+          "/students/verify-signup",
+          {
+            "regNo": regController.text.trim(),
+          },
         );
 
-        final data = jsonDecode(response.body);
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final student = data["student"];
 
-        if (data["status"] == "ALREADY_REGISTERED") {
           setState(() {
-            isValidRegisterNumber = false;
-          });
+            nameController.text = student["name"];
+            selectedDepartment = student["department"];
+            busId = student["busId"];
 
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("This register number is already registered"),
-              backgroundColor: Colors.red,
-            ),
-          );
-          return;
-        }
+            routeController.text = student["busId"];
+            boardingController.text = student["boardingPoint"];
 
-        if (data["status"] == "NOT_FOUND") {
-          setState(() {
-            isValidRegisterNumber = false;
-          });
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Invalid Register Number"),
-              backgroundColor: Colors.red,
-            ),
-          );
-          return;
-        }
-
-        if (data["status"] == "PRE_REGISTERED") {
-          setState(() {
-            nameController.text = data["name"];
-            busId = data["busId"];
-            selectedRoute = data["busName"];
-            selectedBoardingPoint = data["boardingPoint"];
-            routeList = [data["busName"]];
-            boardingPointList = [data["boardingPoint"]];
+            selectedRoute = student["busId"];
+            selectedBoardingPoint = student["boardingPoint"];
 
             isValidRegisterNumber = true;
           });
+
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text("Register number verified"),
+              content: Text("Student verified successfully"),
               backgroundColor: Colors.green,
             ),
           );
-        }
+        } else {
+          setState(() {
+            isValidRegisterNumber = false;
+          });
 
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Student not found"),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       } catch (e) {
+        setState(() {
+          isValidRegisterNumber = false;
+        });
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text("Server error"),
@@ -125,141 +127,50 @@
 
     // ---------------- SEND OTP ----------------
     Future<void> sendOtp() async {
+
+      if (phoneController.text.trim().length != 10) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Enter valid 10-digit phone number")),
+        );
+        return;
+      }
+
       setState(() => isLoading = true);
 
       await _auth.verifyPhoneNumber(
         phoneNumber: "+91${phoneController.text.trim()}",
+
         verificationCompleted: (credential) async {
           await _auth.signInWithCredential(credential);
         },
+
         verificationFailed: (e) {
           setState(() => isLoading = false);
           ScaffoldMessenger.of(context)
               .showSnackBar(SnackBar(content: Text(e.message ?? "OTP failed")));
         },
+
         codeSent: (vid, token) {
-          setState(() {
-            verificationId = vid;
-            otpSent = true;
-            isLoading = false;
-          });
+
+          setState(() => isLoading = false);
+
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => StudentOtpPage(
+                verificationId: vid,
+                regNo: regController.text.trim(),
+                phoneNumber: phoneController.text.trim(),
+                isSignup: true, // 🔥 SIGNUP FLOW
+              ),
+            ),
+          );
         },
-        codeAutoRetrievalTimeout: (vid) {
-          verificationId = vid;
-        },
+
+        codeAutoRetrievalTimeout: (vid) {},
       );
     }
-  //to pre-fill the route and stop dropdowns
-    Future<void> fetchStudentDetails(String registerNumber) async {
-      try {
-        final response = await http.post(
-          Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/get-student-by-reg"),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({
-            "registerNumber": registerNumber,
-          }),
-        );
-
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-
-          setState(() {
-            nameController.text = data["name"];
-            busId = data["busId"];
-            busName = data["busName"];
-            boardingPoint = data["boardingPoint"];
-            isValidRegisterNumber = true;
-          });
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Pre-registered student found")),
-          );
-        } else {
-          setState(() {
-            isPreRegistered = false;
-          });
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Student not pre-registered")),
-          );
-        }
-      } catch (e) {
-        print("Error fetching student: $e");
-      }
-    }
-
-    // ---------------- VERIFY OTP & SAVE ----------------
-    Future<void> verifyOtpAndRegister() async {
-
-      if (selectedDepartment == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Please select Department")),
-        );
-        return;
-      }
-      if (selectedRoute == null || selectedBoardingPoint == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Student route not found")),
-        );
-        return;
-      }
-      try {
-        setState(() => isLoading = true);
-
-        PhoneAuthCredential credential = PhoneAuthProvider.credential(
-          verificationId: verificationId,
-          smsCode: otpController.text.trim(),
-        );
-
-        await _auth.signInWithCredential(credential);
-
-        // 🔥 CALL BACKEND COMPLETE SIGNUP
-        final response = await http.post(
-          Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/complete-signup"),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({
-            "regNo": regController.text.trim(),
-            "department": selectedDepartment,
-            "routeName": selectedRoute,
-            "boardingPoint": selectedBoardingPoint,
-          }),
-        );
-
-        if (response.statusCode == 200) {
-
-          final prefs = await SharedPreferences.getInstance();
-
-          await prefs.setBool("isLoggedIn", true);
-          await prefs.setString("role", "student");
-          await prefs.setString("busId", busId!);
-          await prefs.setString("routeName", selectedRoute!);
-          await prefs.setString("boardingPoint", selectedBoardingPoint!);
-          await prefs.setString("department", selectedDepartment!);
-
-          // 🔔 Subscribe to bus topic
-          await FirebaseMessaging.instance
-              .subscribeToTopic(busId!.toLowerCase());
-
-          setState(() => isLoading = false);
-
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => const StudentHomePage()),
-          );
-
-        } else {
-          setState(() => isLoading = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Signup failed")),
-          );
-        }
-
-      } catch (e) {
-        setState(() => isLoading = false);
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text("Invalid OTP")));
-      }
-    }
+    String? verificationId;
     // ---------------- UI ----------------
     @override
     Widget build(BuildContext context) {
@@ -364,7 +275,7 @@
                           const SizedBox(height: 12),
 
                           TextField(
-                            controller: TextEditingController(text: selectedRoute ?? ""),
+                            controller: routeController,
                             readOnly: true,
                             decoration: InputDecoration(
                               prefixIcon: const Icon(Icons.directions_bus, color: Colors.teal),
@@ -378,7 +289,7 @@
                           const SizedBox(height: 12),
 
                           TextField(
-                            controller: TextEditingController(text: selectedBoardingPoint ?? ""),
+                            controller: boardingController,
                             readOnly: true,
                             decoration: InputDecoration(
                               prefixIcon: const Icon(Icons.location_on, color: Colors.teal),
@@ -390,29 +301,23 @@
                           ),
                           const SizedBox(height: 12),
 
-                          if (otpSent)
-                            inputBox(otpController, "Enter OTP", Icons.lock,
-                                type: TextInputType.number),
-
                           const SizedBox(height: 16),
 
                           isLoading
                               ? const CircularProgressIndicator()
                               :ElevatedButton(
-                            onPressed: otpSent
-                                ? verifyOtpAndRegister
-                                : () async {
+                            onPressed: () async {
                               await checkRegisterNumber();
                               if (isValidRegisterNumber) {
-                                sendOtp();
+                                await sendOtp();
                               }
                             },
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.teal,
                             ),
-                            child: Text(
-                              otpSent ? "VERIFY & CREATE" : "SEND OTP",
-                              style: const TextStyle(
+                            child: const Text(
+                              "SEND OTP",
+                              style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
                               ),

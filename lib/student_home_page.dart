@@ -1057,9 +1057,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
     }
   }
 
-  String formatTime(int timestamp) {
+  String formatTime(dynamic timestamp) {
+    if (timestamp == null) return "Just now";
+
     final now = DateTime.now();
-    final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
+    final date = DateTime.fromMillisecondsSinceEpoch(
+        (timestamp is int) ? timestamp : 0);
+
     final difference = now.difference(date);
 
     if (difference.inMinutes < 1) return "Just now";
@@ -1113,8 +1117,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
           // 🔥 SORT KEYS BY TIMESTAMP DESC
           final keys = data.keys.toList()
-            ..sort((a, b) =>
-                data[b]["timestamp"].compareTo(data[a]["timestamp"]));
+            ..sort((a, b) {
+              final tsA = data[a]["timestamp"] ?? 0;
+              final tsB = data[b]["timestamp"] ?? 0;
+              return tsB.compareTo(tsA);
+            });
 
           return ListView.builder(
             padding: const EdgeInsets.all(16),

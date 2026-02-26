@@ -95,7 +95,10 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
       await http.post(
         Uri.parse(
             "https://null-sheldon-unstudded.ngrok-free.dev/drivers/report-issue"),
-        headers: {"Content-Type": "application/json"},
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": "smartbus_2026_secure",
+        },
         body: jsonEncode({
           "busId": busId,
           "issueType": issue,
@@ -129,7 +132,10 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
       await http.post(
         Uri.parse(
             "https://null-sheldon-unstudded.ngrok-free.dev/drivers/clear-issue"),
-        headers: {"Content-Type": "application/json"},
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": "smartbus_2026_secure",
+        },
         body: jsonEncode({"busId": busId}),
       );
     } catch (e) {

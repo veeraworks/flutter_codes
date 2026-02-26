@@ -5,7 +5,7 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:http/http.dart' as http;
+import 'service/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
@@ -26,7 +26,6 @@ class DriverHomePage extends StatefulWidget {
 class _DriverHomePageState extends State<DriverHomePage> {
   bool tripStarted = false;
   String? tripMode;
-  bool _initialized = false;
   // 🔑 BUS INFO STATE (ADDED)
   String busNumber = "-";
   String routeName = "-";
@@ -54,13 +53,10 @@ class _DriverHomePageState extends State<DriverHomePage> {
   // 🗺️ MAP STATE
   GoogleMapController? _mapController;
   Marker? _driverMarker;
-  Marker? _startMarker;
-  Marker? _endMarker;
   LatLng _currentLatLng = const LatLng(13.0827, 80.2707); // default
 
   // 🧵 ROUTE POLYLINE STATE
   final List<LatLng> _routePoints = [];
-  Set<Polyline> _polylines = {};
 
   @override
   void initState() {
@@ -105,7 +101,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
     await _checkStatuses();
 
     setState(() {
-      _initialized = true;
     });
   }
 
@@ -317,17 +312,6 @@ class _DriverHomePageState extends State<DriverHomePage> {
           _routePoints.add(latLng);
         }
 
-        _polylines = {
-          Polyline(
-            polylineId: const PolylineId("route"),
-            points: _routePoints,
-            color: Colors.blue,
-            width: 6,
-            jointType: JointType.round,
-            startCap: Cap.roundCap,
-            endCap: Cap.roundCap,
-          ),
-        };
       });
 
       _mapController?.animateCamera(
@@ -367,16 +351,12 @@ class _DriverHomePageState extends State<DriverHomePage> {
     }
 
 
-    final response = await http.post(
-      Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/start-trip"),
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": "smartbus_2026_secure"
-      },
-      body: jsonEncode({
+    final response = await ApiService.post(
+      "/drivers/start-trip",
+      {
         "busId": busId,
         "mode": mode,
-      }),
+      },
     );
 
     if (response.statusCode == 200) {
@@ -422,14 +402,12 @@ class _DriverHomePageState extends State<DriverHomePage> {
     await prefs.remove("activeTripId");
     await prefs.remove("tripMode");
 
-    final response = await http.post(
-      Uri.parse(
-          "https://null-sheldon-unstudded.ngrok-free.dev/drivers/end-trip"),
-      headers: {"Content-Type": "application/json"},
-      body: jsonEncode({
+    final response = await ApiService.post(
+      "/drivers/end-trip",
+      {
         "busId": busId,
         "tripId": currentTripId,
-      }),
+      },
     );
 
     await positionStream?.cancel();
@@ -451,10 +429,8 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
     if (phone == null) return;
 
-    final response = await http.get(
-      Uri.parse(
-          "https://null-sheldon-unstudded.ngrok-free.dev/drivers/profile?phone=$phone"),
-    );
+    final response =
+    await ApiService.get("/drivers/profile?phone=$phone");
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);

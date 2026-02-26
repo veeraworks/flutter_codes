@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'service/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'driver_home_page.dart';
 
@@ -33,12 +33,11 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
     setState(() => isLoading = true);
 
     try {
-      final response = await http.post(
-        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/check-driver"), // ✅ FIXED IP
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
+      final response = await ApiService.post(
+        "/drivers/check-driver",
+        {
           "phone": widget.phoneNumber,
-        }),
+        },
       ).timeout(const Duration(seconds: 8));
 
 

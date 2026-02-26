@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'service/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,7 +18,7 @@ class _TemporaryBusChangePageState
   String currentBus = "-";
   String currentRoute = "-";
   String selectedRoute = "";
-  bool isTempActive = false; // 🔥 KEY FLAG
+  bool isTempActive = false;
   String selectedBus = "";
 
   final List<String> routes = [
@@ -103,14 +103,13 @@ class _TemporaryBusChangePageState
       });
 
       // ✅ CALL BACKEND (SEND NOTIFICATION)
-      await http.post(
-        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/temporary-bus"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
+      await ApiService.post(
+        "/drivers/temporary-bus",
+        {
           "busId": busId,
           "tempBusNumber": newBus,
           "active": true,
-        }),
+        },
       );
 
       setState(() {
@@ -171,13 +170,12 @@ class _TemporaryBusChangePageState
       });
 
       // ✅ CALL BACKEND (NOTIFY RESTORE)
-      await http.post(
-        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/temporary-bus"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
+      await ApiService.post(
+        "/drivers/temporary-bus",
+        {
           "busId": busId,
           "active": false,
-        }),
+        },
       );
 
       setState(() {

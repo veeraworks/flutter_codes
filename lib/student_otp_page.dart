@@ -1,17 +1,23 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'service/api_service.dart';
 import 'student_home_page.dart';
 
 class StudentOtpPage extends StatefulWidget {
-  final String studentId;
+  final String verificationId;
+  final String regNo;
   final String phoneNumber;
+  final bool isSignup; // 🔥 differentiate login & signup
 
   const StudentOtpPage({
     super.key,
-    required this.studentId,
+    required this.verificationId,
+    required this.regNo,
     required this.phoneNumber,
+    required this.isSignup,
   });
 
   @override
@@ -20,10 +26,12 @@ class StudentOtpPage extends StatefulWidget {
 
 class _StudentOtpPageState extends State<StudentOtpPage> {
   final TextEditingController otpController = TextEditingController();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
   bool isLoading = false;
 
   Future<void> _submitOtp() async {
-    if (otpController.text.isEmpty) {
+    if (otpController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Enter OTP")),
       );
@@ -33,54 +41,70 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
     setState(() => isLoading = true);
 
     try {
-      final response = await http.post(
-        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/check-student"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "regNo": widget.studentId,
-          "phone": widget.phoneNumber,
-        }),
+      // 🔐 STEP 1: Verify OTP via Firebase
+      PhoneAuthCredential credential =
+      PhoneAuthProvider.credential(
+        verificationId: widget.verificationId,
+        smsCode: otpController.text.trim(),
       );
+
+      await _auth.signInWithCredential(credential);
+
+      // 🔥 STEP 2: Call backend
+      final response = await ApiService.post(
+        widget.isSignup
+            ? "/students/complete-signup"
+            : "/students/check-student",
+        {
+          "regNo": widget.regNo,
+          "phone": widget.phoneNumber,
+        },
+      );
+
+      if (response.statusCode != 200) {
+        throw Exception("Backend error");
+      }
 
       final data = jsonDecode(response.body);
 
-      if (response.statusCode == 200 && data["student"] != null) {
-
-        final student = data["student"];
-
-        final prefs = await SharedPreferences.getInstance();
-
-        await prefs.setBool("isLoggedIn", true);
-        await prefs.setString("role", "student");
-        String formattedRegNo = widget.studentId
-            .toString()
-            .trim()
-            .toUpperCase();
-
-        await prefs.setString("regNo", formattedRegNo);
-        await prefs.setString("studentId", formattedRegNo);
-        await prefs.setString("studentName", student["name"] ?? "");
-        await prefs.setString("routeName", student["route"] ?? "");
-        await prefs.setString("busNumber", student["busNo"] ?? "");
-        await prefs.setString("busId", student["busId"] ?? ""); // 🔥 ADD THIS
-        await prefs.setString("boardingPoint", student["boardingPoint"] ?? "");
-
-        if (!mounted) return;
-
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => const StudentHomePage()),
-              (route) => false,
-        );
-
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Student not found")),
-        );
+      if (data["student"] == null) {
+        throw Exception("Student not found");
       }
+
+      final student = data["student"];
+
+      // 💾 STEP 3: Save session
+      final prefs = await SharedPreferences.getInstance();
+
+      await prefs.setBool("isLoggedIn", true);
+      await prefs.setString("role", "student");
+      await prefs.setString("regNo", widget.regNo.toUpperCase());
+      await prefs.setString("studentName", student["name"] ?? "");
+      await prefs.setString("busId", student["busId"] ?? "");
+      await prefs.setString("routeName", student["routeName"] ?? "");
+      await prefs.setString("boardingPoint", student["boardingPoint"] ?? "");
+
+      // 🔔 Subscribe to bus topic
+      if (student["busId"] != null) {
+        await FirebaseMessaging.instance
+            .subscribeToTopic(student["busId"].toString().toLowerCase());
+      }
+
+      if (!mounted) return;
+
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const StudentHomePage()),
+            (route) => false,
+      );
+
+    } on FirebaseAuthException {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Invalid OTP")),
+      );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Server not reachable")),
+        const SnackBar(content: Text("Login failed")),
       );
     } finally {
       if (mounted) setState(() => isLoading = false);
@@ -109,7 +133,7 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Container(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(20),
@@ -125,13 +149,12 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 CircleAvatar(
-                  radius: 36,
+                  radius: 38,
                   backgroundColor: Colors.teal.withOpacity(0.15),
-                  child: const Icon(Icons.lock, color: Colors.teal, size: 34),
+                  child: const Icon(Icons.lock,
+                      color: Colors.teal, size: 36),
                 ),
-
-                const SizedBox(height: 16),
-
+                const SizedBox(height: 20),
                 const Text(
                   "ENTER OTP",
                   style: TextStyle(
@@ -140,31 +163,26 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
                     color: Colors.teal,
                   ),
                 ),
-
                 const SizedBox(height: 8),
-
                 Text(
-                  "OTP sent to ${widget.phoneNumber}",
+                  "OTP sent to +91 ${widget.phoneNumber}",
                   style: const TextStyle(color: Colors.grey),
                 ),
-
-                const SizedBox(height: 20),
-
+                const SizedBox(height: 24),
                 TextField(
                   controller: otpController,
                   keyboardType: TextInputType.number,
                   decoration: InputDecoration(
-                    prefixIcon:
-                    const Icon(Icons.password, color: Colors.teal),
+                    prefixIcon: const Icon(Icons.password,
+                        color: Colors.teal),
                     hintText: "Enter OTP",
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius:
+                      BorderRadius.circular(12),
                     ),
                   ),
                 ),
-
-                const SizedBox(height: 20),
-
+                const SizedBox(height: 28),
                 SizedBox(
                   width: double.infinity,
                   height: 52,
@@ -173,16 +191,18 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.teal,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30),
+                        borderRadius:
+                        BorderRadius.circular(30),
                       ),
                     ),
                     child: isLoading
                         ? const CircularProgressIndicator(
-                      color: Colors.white,
-                    )
-                        : const Text(
-                      "SUBMIT",
-                      style: TextStyle(
+                        color: Colors.white)
+                        : Text(
+                      widget.isSignup
+                          ? "VERIFY & CREATE"
+                          : "VERIFY & LOGIN",
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
                         color: Colors.white,
