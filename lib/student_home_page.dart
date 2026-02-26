@@ -45,6 +45,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
   @override
   void initState() {
     super.initState();
+    _loadActiveIssue();
     _initializeStudent();
   }
   Future<void> _initializeStudent() async {
@@ -89,6 +90,27 @@ class _StudentHomePageState extends State<StudentHomePage> {
           }
         });
   }
+
+  Future<void> _loadActiveIssue() async {
+    final prefs = await SharedPreferences.getInstance();
+    final busId = prefs.getString("busId");
+
+    if (busId == null) return;
+
+    final snapshot = await FirebaseDatabase.instance
+        .ref("busIssues/$busId")
+        .get();
+
+    if (!snapshot.exists) return;
+
+    final data = Map<String, dynamic>.from(snapshot.value as Map);
+
+    if (data["status"] == "ACTIVE") {
+      setState(() {
+        activeIssue = data["issueType"];
+      });
+    }
+  }
   @override
   void dispose() {
     _issueListener?.cancel();
@@ -98,46 +120,74 @@ class _StudentHomePageState extends State<StudentHomePage> {
     _studentLocationTimer?.cancel();
     super.dispose();
   }
-
   Future<void> _refreshStudentProfile() async {
     final prefs = await SharedPreferences.getInstance();
     final regNo = prefs.getString("regNo");
 
-    if (regNo == null) return;
+    // ✅ DEBUG PRINT
+    print("🔥 REGNO BEFORE API CALL = $regNo");
+
+    if (regNo == null || regNo.isEmpty) {
+      print("❌ REGNO IS NULL OR EMPTY");
+      return;
+    }
 
     final oldBusId = prefs.getString("busId");
+
     final response = await http.get(
-      Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/profile?regNo=$regNo"),
+      Uri.parse(
+        "https://null-sheldon-unstudded.ngrok-free.dev/students/profile?regNo=${regNo.trim().toUpperCase()}",
+      ),
     );
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final newBusId = data["busId"];
+    // ✅ HANDLE 404
+    if (response.statusCode == 404) {
+      print("❌ Student not found in backend");
 
-      print("STUDENT BUS ID FROM BACKEND = $newBusId");
-      print("OLD BUS ID = $oldBusId");
+      if (!mounted) return;
 
-      if (oldBusId != null && oldBusId != newBusId) {
-        print("Unsubscribing from old topic: ${oldBusId.toLowerCase()}");
-        await FirebaseMessaging.instance
-            .unsubscribeFromTopic(oldBusId.toLowerCase());
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Session expired. Please login again."),
+        ),
+      );
 
-      print("Subscribing to new topic: ${newBusId.toLowerCase()}");
+      return;
+    }
+
+    if (response.statusCode != 200) {
+      print("❌ API FAILED: ${response.statusCode}");
+      return;
+    }
+
+    final data = jsonDecode(response.body);
+    final newBusId = data["busId"];
+
+    print("STUDENT BUS ID FROM BACKEND = $newBusId");
+    print("OLD BUS ID = $oldBusId");
+
+    // 🔥 UNSUBSCRIBE OLD TOPIC
+    if (oldBusId != null && oldBusId != newBusId) {
+      await FirebaseMessaging.instance
+          .unsubscribeFromTopic(oldBusId.toLowerCase());
+    }
+
+    // 🔥 SUBSCRIBE NEW TOPIC
+    if (newBusId != null) {
       await FirebaseMessaging.instance
           .subscribeToTopic(newBusId.toLowerCase());
-
-      await prefs.setString("busId", newBusId);
-      await prefs.setString("routeName", data["busName"]);
-      await prefs.setString("studentName", data["name"]);
-
-      setState(() {
-        studentName = data["name"];
-        routeName = data["busName"];
-        displayRoute = data["busName"];
-        busId = newBusId;
-      });
     }
+
+    await prefs.setString("busId", newBusId ?? "");
+    await prefs.setString("routeName", data["busName"] ?? "");
+    await prefs.setString("studentName", data["name"] ?? "");
+
+    setState(() {
+      studentName = data["name"];
+      routeName = data["busName"];
+      displayRoute = data["busName"];
+      busId = newBusId;
+    });
   }
 
   Future<void> _subscribeToRoute() async {
@@ -243,14 +293,27 @@ class _StudentHomePageState extends State<StudentHomePage> {
             onPressed: () async {
               Navigator.pop(context);
 
-              // 🔥 Clear SharedPreferences session
               final prefs = await SharedPreferences.getInstance();
+              final oldBusId = prefs.getString("busId");
+
+              // 🔥 UNSUBSCRIBE FROM FCM TOPIC
+              if (oldBusId != null && oldBusId.isNotEmpty) {
+                final topic = oldBusId.toLowerCase().trim();
+                print("Unsubscribing from topic: $topic");
+
+                await FirebaseMessaging.instance
+                    .unsubscribeFromTopic(topic);
+              }
+
+              // 🔥 CLEAR SESSION
               await prefs.clear();
 
-              // 🔥 Optional: Firebase sign out (safe to keep)
+              // 🔥 SIGN OUT
               await FirebaseAuth.instance.signOut();
 
-              // 🔥 Navigate & remove back stack
+              if (!mounted) return;
+
+              // 🔥 REMOVE BACK STACK
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(builder: (_) => const WelcomePage()),
