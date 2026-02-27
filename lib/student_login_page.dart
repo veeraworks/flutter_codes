@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'student_otp_page.dart';
 import 'student_signup_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'student_signup_page.dart';
 
 class StudentLoginPage extends StatefulWidget {
   const StudentLoginPage({super.key});
@@ -292,7 +293,7 @@ class _StudentLoginPageState extends State<StudentLoginPage>
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (context) => const StudentSignupPage(),
+                                      builder: (context) => const StudentSignupStep1(),
                                     ),
                                   );
                                 },

@@ -7,7 +7,6 @@ import 'package:firebase_database/firebase_database.dart';
 import 'service/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:http/http.dart' as http;
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 
 class MapPage extends StatefulWidget {
