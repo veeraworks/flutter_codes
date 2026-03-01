@@ -3,7 +3,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'student_otp_page.dart';
 
 class StudentSignupStep2 extends StatefulWidget {
-
   final String regNo;
   final String phoneNumber;
   final String name;
@@ -26,13 +25,11 @@ class StudentSignupStep2 extends StatefulWidget {
 }
 
 class _StudentSignupStep2State extends State<StudentSignupStep2> {
-
   final FirebaseAuth _auth = FirebaseAuth.instance;
   bool isLoading = false;
 
   // ================= SEND OTP =================
   Future<void> sendOtp() async {
-
     setState(() => isLoading = true);
 
     await _auth.verifyPhoneNumber(
@@ -50,7 +47,6 @@ class _StudentSignupStep2State extends State<StudentSignupStep2> {
       },
 
       codeSent: (vid, token) {
-
         setState(() => isLoading = false);
 
         Navigator.push(
@@ -75,6 +71,7 @@ class _StudentSignupStep2State extends State<StudentSignupStep2> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey.shade100,
+      extendBodyBehindAppBar: true,
 
       appBar: AppBar(
         elevation: 0,
@@ -82,106 +79,120 @@ class _StudentSignupStep2State extends State<StudentSignupStep2> {
         iconTheme: const IconThemeData(color: Colors.black),
       ),
 
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
+      body: Stack(
+        children: [
 
-            /// TOP IMAGE (same as step1/login)
-            Image.asset(
-              "assets/images/college.png",
-              height: 220,
-              fit: BoxFit.contain,
+          /// ✅ FULL WIDTH HEADER IMAGE (TOP)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Image.asset(
+              "assets/images/student2.jpg",
+              height: 240,
+              width: double.infinity,
+              fit: BoxFit.cover,
             ),
+          ),
 
-            const SizedBox(height: 10),
-
-            /// CARD
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 20),
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(22),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.06),
-                    blurRadius: 15,
-                    offset: const Offset(0, 6),
-                  )
-                ],
-              ),
-
+          /// ✅ PAGE CONTENT
+          Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Column(
                 children: [
 
-                  /// ICON
+                  /// Push card below image
+                  const SizedBox(height: 180),
+
+                  /// CARD
                   Container(
-                    padding: const EdgeInsets.all(18),
+                    padding: const EdgeInsets.all(24),
                     decoration: BoxDecoration(
-                      color: Colors.teal.withOpacity(0.12),
-                      shape: BoxShape.circle,
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(22),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.06),
+                          blurRadius: 15,
+                          offset: const Offset(0, 6),
+                        )
+                      ],
                     ),
-                    child: const Icon(
-                      Icons.verified_user,
-                      color: Colors.teal,
-                      size: 30,
-                    ),
-                  ),
+                    child: Column(
+                      children: [
 
-                  const SizedBox(height: 14),
-
-                  const Text(
-                    "CONFIRM DETAILS",
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.teal,
-                      letterSpacing: 1,
-                    ),
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  /// DETAILS BOX
-                  _infoTile(Icons.person, "Name", widget.name),
-                  _infoTile(Icons.school, "Department", widget.department),
-                  _infoTile(Icons.directions_bus, "Bus", widget.busId),
-                  _infoTile(Icons.location_on, "Boarding", widget.boardingPoint),
-                  _infoTile(Icons.phone, "Phone", widget.phoneNumber),
-
-                  const SizedBox(height: 28),
-
-                  /// BUTTON
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: ElevatedButton(
-                      onPressed: isLoading ? null : sendOtp,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.teal,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                        /// ICON
+                        Container(
+                          padding: const EdgeInsets.all(18),
+                          decoration: BoxDecoration(
+                            color: Colors.teal.withOpacity(0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.verified_user,
+                            color: Colors.teal,
+                            size: 30,
+                          ),
                         ),
-                      ),
-                      child: isLoading
-                          ? const CircularProgressIndicator(
-                          color: Colors.white)
-                          : const Text(
-                        "SEND OTP",
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
+
+                        const SizedBox(height: 14),
+
+                        const Text(
+                          "CONFIRM DETAILS",
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.teal,
+                            letterSpacing: 1,
+                          ),
                         ),
-                      ),
+
+                        const SizedBox(height: 24),
+
+                        /// DETAILS
+                        _infoTile(Icons.person, "Name", widget.name),
+                        _infoTile(Icons.school, "Department", widget.department),
+                        _infoTile(Icons.directions_bus, "Bus", widget.busId),
+                        _infoTile(Icons.location_on, "Boarding", widget.boardingPoint),
+                        _infoTile(Icons.phone, "Phone", widget.phoneNumber),
+
+                        const SizedBox(height: 28),
+
+                        /// SEND OTP BUTTON
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: ElevatedButton(
+                            onPressed: isLoading ? null : sendOtp,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.teal,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            child: isLoading
+                                ? const CircularProgressIndicator(
+                                color: Colors.white)
+                                : const Text(
+                              "SEND OTP",
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
+
+                  const SizedBox(height: 40),
                 ],
               ),
             ),
-
-            const SizedBox(height: 30),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
