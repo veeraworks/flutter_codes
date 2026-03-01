@@ -405,6 +405,7 @@ class _MapPageState extends State<MapPage> {
               rotation: _currentRotation,
               anchor: const Offset(0.5, 0.5),
               flat: true,
+              zIndex: 2,
             );
           });
 
@@ -699,12 +700,18 @@ class _MapPageState extends State<MapPage> {
             polylines: _polylines,
           ),
 
-          if (_etaSeconds != null)
-            Positioned(
-              top: 20,
-              left: 20,
-              right: 20,
-              child: Container(
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeOut,
+            top: (_etaSeconds ?? 0) > 0 ? 20 : -80,
+            left: 20,
+            right: 20,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 300),
+              opacity: _etaSeconds != null ? 1 : 0,
+              child: _etaSeconds == null
+                  ? const SizedBox()
+                  : Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: Colors.black87,
@@ -722,7 +729,7 @@ class _MapPageState extends State<MapPage> {
                 ),
               ),
             ),
-
+          ),
           Positioned(
             bottom: 100,
             right: 20,
@@ -732,6 +739,17 @@ class _MapPageState extends State<MapPage> {
                 setState(() {
                   _followBus = !_followBus;
                 });
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    duration: const Duration(milliseconds: 800),
+                    content: Text(
+                      _followBus
+                          ? "Following Bus"
+                          : "Manual Map Mode",
+                    ),
+                  ),
+                );
               },
               child: Icon(
                 _followBus ? Icons.gps_fixed : Icons.gps_not_fixed,

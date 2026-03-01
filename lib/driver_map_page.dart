@@ -16,9 +16,12 @@ class DriverMapPage extends StatefulWidget {
 }
 
 class _DriverMapPageState extends State<DriverMapPage> {
-
+  bool _isIdle = false;
+  DateTime? _lastMovementTime;
   GoogleMapController? _mapController;
-
+  LatLng? _lastPublishedLocation;
+  double _lastPublishedBearing = 0;
+  DateTime? _lastPublishTime;
   LatLng? _driverLocation;
   double _driverBearing = 0;
 
@@ -35,7 +38,6 @@ class _DriverMapPageState extends State<DriverMapPage> {
   List<Map<String, dynamic>> _routeStops = [];
   List<LatLng> _routePoints = [];
   bool _arrivalTriggered = false;
-
   StreamSubscription<Position>? _gpsSubscription;
 
   String? busId;
@@ -73,6 +75,35 @@ class _DriverMapPageState extends State<DriverMapPage> {
     );
   }
 
+  bool _shouldPublishUpdate(LatLng newPos, double newBearing) {
+    if (_isIdle) {
+      final now = DateTime.now();
+
+      if (_lastPublishTime == null) return true;
+
+      // publish only every 20 seconds when idle
+      return now.difference(_lastPublishTime!).inSeconds >= 20;
+    }
+    final now = DateTime.now();
+
+    if (_lastPublishedLocation == null) return true;
+
+    double distance = Geolocator.distanceBetween(
+      _lastPublishedLocation!.latitude,
+      _lastPublishedLocation!.longitude,
+      newPos.latitude,
+      newPos.longitude,
+    );
+
+    double bearingDiff =
+    (newBearing - _lastPublishedBearing).abs();
+
+    int seconds =
+        now.difference(_lastPublishTime ?? now).inSeconds;
+
+    // ✅ publish only if meaningful change
+    return distance > 5 || bearingDiff > 10 || seconds >= 5;
+  }
   // ================= DRIVER CAMERA =================
 
   void _updateDriverCamera(LatLng pos, double bearing) {
@@ -109,7 +140,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
             position.latitude,
             position.longitude,
           );
-
+          _detectIdleState(_driverLocation!);
           _driverBearing = position.heading;
 
           _updateDriverCamera(
@@ -157,7 +188,40 @@ class _DriverMapPageState extends State<DriverMapPage> {
       b.longitude,
     );
   }
+  void _detectIdleState(LatLng newPos) {
+    final now = DateTime.now();
 
+    if (_lastPublishedLocation == null) {
+      _lastMovementTime = now;
+      return;
+    }
+
+    double distance = Geolocator.distanceBetween(
+      _lastPublishedLocation!.latitude,
+      _lastPublishedLocation!.longitude,
+      newPos.latitude,
+      newPos.longitude,
+    );
+
+    // movement detected
+    if (distance > 3) {
+      _lastMovementTime = now;
+
+      if (_isIdle) {
+        print("🟢 Bus moving — Exit idle mode");
+        _isIdle = false;
+      }
+    }
+
+    // idle condition (2 minutes)
+    if (_lastMovementTime != null &&
+        now.difference(_lastMovementTime!).inSeconds > 120) {
+      if (!_isIdle) {
+        print("🟡 Bus idle detected");
+        _isIdle = true;
+      }
+    }
+  }
   BitmapDescriptor _getStopColor(String stopName) {
     if (_nextStopName == null) {
       return BitmapDescriptor.defaultMarkerWithHue(
@@ -274,22 +338,31 @@ class _DriverMapPageState extends State<DriverMapPage> {
   Future<void> _publishDriverLocation() async {
     if (busId == null || _driverLocation == null) return;
 
+    if (!_shouldPublishUpdate(
+        _driverLocation!, _driverBearing)) {
+      return; // 🚫 skip unnecessary update
+    }
+
     try {
       await _busRef
           .child("buses/$busId/current")
-          .set({
+          .update({
         "lat": _driverLocation!.latitude,
         "lng": _driverLocation!.longitude,
         "bearing": _driverBearing,
-        "timestamp": DateTime
-            .now()
+        "timestamp": DateTime.now()
             .millisecondsSinceEpoch,
       });
+
+      // ✅ save last published state
+      _lastPublishedLocation = _driverLocation;
+      _lastPublishedBearing = _driverBearing;
+      _lastPublishTime = DateTime.now();
+
     } catch (e) {
       print("Firebase publish error: $e");
     }
   }
-
   // ================= ROUTE STOPS =================
 
   Future<void> _fetchRouteStops() async {
