@@ -16,7 +16,6 @@ class _StudentSignupStep1State extends State<StudentSignupStep1> {
   final TextEditingController phoneController = TextEditingController();
 
   bool isLoading = false;
-  bool isValidRegisterNumber = false;
 
   String? name;
   String? department;
@@ -62,8 +61,6 @@ class _StudentSignupStep1State extends State<StudentSignupStep1> {
         busId = student["busId"];
         boardingPoint = student["boardingPoint"];
 
-        isValidRegisterNumber = true;
-
         // ✅ GO TO STEP 2
         Navigator.push(
           context,
@@ -87,6 +84,7 @@ class _StudentSignupStep1State extends State<StudentSignupStep1> {
           ),
         );
       }
+
     } catch (e) {
       setState(() => isLoading = false);
 
@@ -103,39 +101,139 @@ class _StudentSignupStep1State extends State<StudentSignupStep1> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Student Signup")),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
+      backgroundColor: Colors.grey.shade100,
+
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: Colors.transparent,
+        iconTheme: const IconThemeData(color: Colors.black),
+      ),
+
+      body: SingleChildScrollView(
         child: Column(
           children: [
 
-            TextField(
-              controller: regController,
-              decoration: const InputDecoration(
-                labelText: "Register Number",
-                border: OutlineInputBorder(),
+            Image.asset(
+              "assets/images/student2.png",
+              height: 220,
+              fit: BoxFit.contain,
+            ),
+
+            const SizedBox(height: 10),
+
+            /// CARD
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(22),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.06),
+                    blurRadius: 15,
+                    offset: const Offset(0, 6),
+                  )
+                ],
+              ),
+
+              child: Column(
+                children: [
+
+                  /// ICON
+                  Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: Colors.teal.withOpacity(0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.person_add_alt_1,
+                      color: Colors.teal,
+                      size: 30,
+                    ),
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  const Text(
+                    "STUDENT SIGNUP",
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.teal,
+                      letterSpacing: 1,
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  /// REGISTER NUMBER
+                  TextField(
+                    controller: regController,
+                    decoration: InputDecoration(
+                      hintText: "Register Number",
+                      prefixIcon:
+                      const Icon(Icons.badge_outlined, color: Colors.teal),
+                      filled: true,
+                      fillColor: Colors.grey.shade100,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  /// PHONE
+                  TextField(
+                    controller: phoneController,
+                    keyboardType: TextInputType.phone,
+                    decoration: InputDecoration(
+                      hintText: "Mobile Number",
+                      prefixIcon:
+                      const Icon(Icons.phone, color: Colors.teal),
+                      filled: true,
+                      fillColor: Colors.grey.shade100,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 26),
+
+                  /// BUTTON
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed: isLoading ? null : checkRegisterNumber,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.teal,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: isLoading
+                          ? const CircularProgressIndicator(
+                          color: Colors.white)
+                          : const Text(
+                        "NEXT",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
 
-            const SizedBox(height: 16),
-
-            TextField(
-              controller: phoneController,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: "Phone Number",
-                border: OutlineInputBorder(),
-              ),
-            ),
-
-            const SizedBox(height: 24),
-
-            isLoading
-                ? const CircularProgressIndicator()
-                : ElevatedButton(
-              onPressed: checkRegisterNumber,
-              child: const Text("NEXT"),
-            )
+            const SizedBox(height: 30),
           ],
         ),
       ),

@@ -6,7 +6,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'student_otp_page.dart';
 import 'student_signup_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'student_signup_page.dart';
 
 class StudentLoginPage extends StatefulWidget {
   const StudentLoginPage({super.key});
@@ -78,36 +77,16 @@ class _StudentLoginPageState extends State<StudentLoginPage>
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200 && data["student"] != null) {
-
-        await _auth.verifyPhoneNumber(
-          phoneNumber: "+91$mobileNumber",
-
-          verificationCompleted: (credential) async {
-            await _auth.signInWithCredential(credential);
-          },
-
-          verificationFailed: (e) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(e.message ?? "OTP failed")),
-            );
-          },
-
-          codeSent: (vid, token) {
-
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (context) => StudentOtpPage(
-                  verificationId: vid,
-                  regNo: studentId,
-                  phoneNumber: mobileNumber,
-                  isSignup: false, // 🔥 LOGIN FLOW
-                ),
-              ),
-            );
-          },
-
-          codeAutoRetrievalTimeout: (vid) {},
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => StudentOtpPage(
+              verificationId: "DEV_MODE",
+              regNo: studentId,
+              phoneNumber: mobileNumber,
+              isSignup: false,
+            ),
+          ),
         );
 
       } else {
@@ -292,8 +271,29 @@ class _StudentLoginPageState extends State<StudentLoginPage>
                                 onTap: () {
                                   Navigator.push(
                                     context,
-                                    MaterialPageRoute(
-                                      builder: (context) => const StudentSignupStep1(),
+                                    PageRouteBuilder(
+                                      transitionDuration: const Duration(milliseconds: 350),
+                                      pageBuilder: (context, animation, secondaryAnimation) =>
+                                      const StudentSignupStep1(),
+                                      transitionsBuilder:
+                                          (context, animation, secondaryAnimation, child) {
+
+                                        const begin = Offset(1.0, 0.0);
+                                        const end = Offset.zero;
+
+                                        final tween = Tween(begin: begin, end: end)
+                                            .chain(CurveTween(curve: Curves.easeOutCubic));
+
+                                        final offsetAnimation = animation.drive(tween);
+
+                                        return SlideTransition(
+                                          position: offsetAnimation,
+                                          child: FadeTransition(
+                                            opacity: animation,
+                                            child: child,
+                                          ),
+                                        );
+                                      },
                                     ),
                                   );
                                 },
