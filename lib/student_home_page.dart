@@ -1,17 +1,15 @@
- import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'settings_page.dart';
-import 'map_page.dart';
+import 'student_map_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'main.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'service/api_service.dart';
 class StudentHomePage extends StatefulWidget {
   const StudentHomePage({super.key});
 
@@ -36,8 +34,6 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
   int _currentIndex = 0;
   double? _etaMinutes;
-  Position? _studentPosition;
-  Timer? _studentLocationTimer;
   int unreadCount = 0;
   StreamSubscription? _notificationListener;
 
@@ -55,40 +51,24 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
     //  Load student info into state
     await _loadStudentInfo();
-
+    await _subscribeToRoute();
 
     // Request notification permission
     await _requestPermission();
 
     // Attach listeners
-    _listenForMessages();
+    FirebaseMessaging.onMessageOpenedApp.listen((message) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const NotificationsPage()),
+      );
+    });
     _listenToNotifications();
     _listenToBusIssues();
     _listenToBus();
     _listenToTemporaryBus();
 
     // Start GPS tracking
-    _startLocationTracking();
-  }
-  void _startLocationTracking() {
-    Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.medium,
-    ).then((pos) {
-      _studentPosition = pos;
-    }).catchError((e) {
-      print("Initial student GPS error: $e");
-    });
-
-    _studentLocationTimer =
-        Timer.periodic(const Duration(seconds: 20), (_) async {
-          try {
-            _studentPosition = await Geolocator.getCurrentPosition(
-              desiredAccuracy: LocationAccuracy.medium,
-            );
-          } catch (e) {
-            print("Student GPS error: $e");
-          }
-        });
   }
 
   Future<void> _loadActiveIssue() async {
@@ -117,14 +97,12 @@ class _StudentHomePageState extends State<StudentHomePage> {
     _busListener?.cancel();
     _tempBusListener?.cancel();
     _notificationListener?.cancel();
-    _studentLocationTimer?.cancel();
     super.dispose();
   }
   Future<void> _refreshStudentProfile() async {
     final prefs = await SharedPreferences.getInstance();
     final regNo = prefs.getString("regNo");
 
-    // ✅ DEBUG PRINT
     print("🔥 REGNO BEFORE API CALL = $regNo");
 
     if (regNo == null || regNo.isEmpty) {
@@ -134,24 +112,13 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
     final oldBusId = prefs.getString("busId");
 
-    final response = await http.get(
-      Uri.parse(
-        "https://null-sheldon-unstudded.ngrok-free.dev/students/profile?regNo=${regNo.trim().toUpperCase()}",
-      ),
+    // ✅ THIS IS THE ONLY LINE CHANGED
+    final response = await ApiService.get(
+      "/auth/student-profile/${regNo.trim().toUpperCase()}",
     );
 
-    // ✅ HANDLE 404
     if (response.statusCode == 404) {
-      print("❌ Student not found in backend");
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Session expired. Please login again."),
-        ),
-      );
-
+      print("⚠️ Profile not found — skipping refresh");
       return;
     }
 
@@ -163,17 +130,12 @@ class _StudentHomePageState extends State<StudentHomePage> {
     final data = jsonDecode(response.body);
     final newBusId = data["busId"];
 
-    print("STUDENT BUS ID FROM BACKEND = $newBusId");
-    print("OLD BUS ID = $oldBusId");
-
-    // 🔥 UNSUBSCRIBE OLD TOPIC
     if (oldBusId != null && oldBusId != newBusId) {
       await FirebaseMessaging.instance
           .unsubscribeFromTopic(oldBusId.toLowerCase());
     }
 
-    // 🔥 SUBSCRIBE NEW TOPIC
-    if (newBusId != null) {
+    if (newBusId != null && newBusId.isNotEmpty) {
       await FirebaseMessaging.instance
           .subscribeToTopic(newBusId.toLowerCase());
     }
@@ -241,6 +203,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
       );
     });
   }
+
 
   Future<void> _listenToNotifications() async {
     final prefs = await SharedPreferences.getInstance();
@@ -411,7 +374,8 @@ class _StudentHomePageState extends State<StudentHomePage> {
     final prefs = await SharedPreferences.getInstance();
 
     String? originalBus = prefs.getString("busId");
-    String? currentBus = tempBus ?? originalBus;
+    final String? currentBus =
+    (tempBus ?? originalBus)?.toUpperCase();
 
     if (currentBus == null) return;
 
@@ -431,93 +395,21 @@ class _StudentHomePageState extends State<StudentHomePage> {
         return;
       }
 
-      final map = Map<String, dynamic>.from(data as Map);
-
-      if (!map.containsKey("lat") || !map.containsKey("lng")) {
-        setState(() {
-          _etaMinutes = null;
-        });
-        return;
-      }
-
-      // 🔥 USE CACHED STUDENT POSITION (battery friendly)
-      if (_studentPosition == null) return;
-
-      double lat = map["lat"];
-      double lng = map["lng"];
-
-      double distance = Geolocator.distanceBetween(
-        lat,
-        lng,
-        _studentPosition!.latitude,
-        _studentPosition!.longitude,
-      );
-
-      // ================= ARRIVAL LOGIC =================
-
-      // ✅ ARRIVED (within 30 meters)
-      if (distance < 30) {
-        setState(() {
-          _etaMinutes = 0;
-        });
-        return;
-      }
-
-
-      // ✅ NEARBY (30m – 200m)
-      if (distance >= 30 && distance < 200) {
-        setState(() {
-          _etaMinutes = -1;
-        });
-        return;
-      }
-
-      // ================= SPEED LOGIC =================
-
-      double speed = (map["speed"] ?? 0).toDouble();
-
-      // Track last moving time
-      if (speed > 1.5) {
-        _lastMovingTime = DateTime.now();
-      }
-
-      // If very slow → assume traffic speed
-      if (speed > 0 && speed < 1.5) {
-        speed = 3.0; // ~10 km/h
-      }
-
-      // If stopped
-      if (speed <= 0) {
-        if (_lastMovingTime != null &&
-            DateTime.now().difference(_lastMovingTime!).inSeconds < 20) {
-          // Recently moving → temporary stop (signal)
-          speed = 3.0;
-        } else {
-          // Fully stopped
-          setState(() {
-            _etaMinutes = null;
-          });
-          return;
-        }
-      }
-
-      // ================= ETA CALCULATION =================
-
-      double timeInSeconds = distance / speed;
-      double timeInMinutes = timeInSeconds / 60;
-
+      // ✅ Only confirm bus is online
       setState(() {
-        _etaMinutes = timeInMinutes.ceilToDouble();
+        _etaMinutes = null; // ETA handled by backend/map page
       });
     });
   }
+
 
   //ISSUE REPORTING BY BUS ALERT
   Future<void> _listenToBusIssues() async {
     final prefs = await SharedPreferences.getInstance();
 
     final originalBus = prefs.getString("busId");
-    final currentBus = tempBus ?? originalBus;
+    final currentBus =
+    (tempBus ?? originalBus)?.toUpperCase();
 
     if (currentBus == null) return;
 

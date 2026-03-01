@@ -20,6 +20,10 @@ class DriverFullMapPage extends StatelessWidget {
         title: const Text("Live Bus Location"),
       ),
       body: GoogleMap(
+        mapType: MapType.normal,
+        buildingsEnabled: true,
+        compassEnabled: true,
+
         initialCameraPosition: CameraPosition(
           target: currentLatLng,
           zoom: 17,

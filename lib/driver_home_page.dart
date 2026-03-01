@@ -23,7 +23,9 @@ class DriverHomePage extends StatefulWidget {
 
 }
 
-class _DriverHomePageState extends State<DriverHomePage> {
+class _DriverHomePageState extends State<DriverHomePage>
+    with TickerProviderStateMixin
+{
   bool tripStarted = false;
   String? tripMode;
   // 🔑 BUS INFO STATE (ADDED)
@@ -31,7 +33,16 @@ class _DriverHomePageState extends State<DriverHomePage> {
   String routeName = "-";
   String shift = "-";
   bool isTempBusActive = false;
+  String _getCurrentShift() {
+    final now = DateTime.now();
+    final hour = now.hour; // 0–23 format
 
+    if (hour < 12) {
+      return "Morning";
+    } else {
+      return "Evening";
+    }
+  }
   // NEW: keep permanent and temporary values separate
   String permBusNumber = "-";
   String permRouteName = "-";
@@ -54,14 +65,34 @@ class _DriverHomePageState extends State<DriverHomePage> {
   GoogleMapController? _mapController;
   Marker? _driverMarker;
   LatLng _currentLatLng = const LatLng(13.0827, 80.2707); // default
-
+  late AnimationController _pageAnimController;
+  late Animation<double> _fadeAnimation;
   // 🧵 ROUTE POLYLINE STATE
   final List<LatLng> _routePoints = [];
 
   @override
   void initState() {
     super.initState();
+    _pageAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+
+    _fadeAnimation = CurvedAnimation(
+      parent: _pageAnimController,
+      curve: Curves.easeOut,
+    );
+
+    _pageAnimController.forward();
     _initialize();
+
+    Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) {
+        setState(() {
+          shift = _getCurrentShift();
+        });
+      }
+    });
 
     _gpsCheckTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
       if (tripStarted) {
@@ -109,6 +140,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     positionStream?.cancel();
     _tempBusListener?.cancel();
     _gpsCheckTimer?.cancel();
+    _pageAnimController.dispose();
     super.dispose();
   }
   // ================= LOAD BUS ID ====================================
@@ -128,7 +160,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
       // Permanent
       permBusNumber = prefs.getString("busNumber") ?? "-";
       permRouteName = prefs.getString("routeName") ?? "-";
-      shift = prefs.getString("shift") ?? "-";
+      shift = _getCurrentShift();
 
       // Temporary
       isTempBusActive = prefs.getBool("isTempBusActive") ?? false;
@@ -314,9 +346,11 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
       });
 
-      _mapController?.animateCamera(
-        CameraUpdate.newLatLng(latLng),
-      );
+      if (_mapController != null) {
+        _mapController!.animateCamera(
+          CameraUpdate.newLatLng(latLng),
+        );
+      }
 
       // ================= FIREBASE UPDATE =================
       if (busId != null && internetOn) {
@@ -430,24 +464,30 @@ class _DriverHomePageState extends State<DriverHomePage> {
     if (phone == null) return;
 
     final response =
-    await ApiService.get("/drivers/profile?phone=$phone");
+    await ApiService.get("/auth/driver-profile/$phone");
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
+    if (response.statusCode != 200) return;
 
-      await prefs.setString("driverName", data["name"]);
-      await prefs.setString("phoneNumber", data["phone"]);
-      await prefs.setString("busId", data["busId"]);
-      await prefs.setString("busNumber", data["busId"]);
-      await prefs.setString("routeName", data["busName"]);
-      await prefs.setString("shift", data["shift"]);
+    final data = jsonDecode(response.body);
 
-      setState(() {
-        permBusNumber = data["busId"];
-        permRouteName = data["busName"];
-        busId = data["busId"];
-        shift = data["shift"] ?? "-";
-        permBusId = data["busId"];
+    // 🔥 SAVE UPDATED VALUES
+    await prefs.setString("driverName", data["name"]);
+    await prefs.setString("busId", data["busId"]);
+    await prefs.setString("busNumber", data["busId"]);
+    await prefs.setString("routeName", data["busName"]);
+
+    setState(() {
+      permBusNumber = data["busId"];
+      permRouteName = data["busName"];
+      busId = data["busId"];
+      permBusId = data["busId"];
+      shift = _getCurrentShift();
+    });
+
+    // 🔥 UPDATE BACKGROUND SERVICE IF TRIP ACTIVE
+    if (tripStarted && busId != null) {
+      FlutterBackgroundService().invoke("setBusId", {
+        "busId": busId,
       });
     }
   }
@@ -456,267 +496,329 @@ class _DriverHomePageState extends State<DriverHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F3F7),
+        backgroundColor: const Color(0xFFF6F3F7),
 
-      drawer: Drawer(
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            const DrawerHeader(
-              decoration: BoxDecoration(color: Color(0xFF00BFA6)),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  CircleAvatar(
-                    radius: 28,
-                    backgroundColor: Colors.white,
-                    child: Icon(Icons.person, color: Color(0xFF00BFA6)),
-                  ),
-                  SizedBox(height: 12),
-                  Text(
-                    "Driver",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            ListTile(
-              leading: const Icon(Icons.person),
-              title: const Text("Profile"),
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const DriverProfilePage()),
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.map, color: Colors.blue),
-              title: const Text("Live Map"),
-              onTap: () {
-                Navigator.pop(context);
-
-                if (!tripStarted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Start trip to view map")),
-                  );
-                  return;
-                }
-
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => DriverFullMapPage(
-                      currentLatLng: _currentLatLng,
-                      marker: _driverMarker,
-                      routePoints: List.from(_routePoints),
-                    ),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.swap_horiz, color: Colors.orange),
-              title: const Text("Temporary Bus Change"),
-              onTap: () async {
-                Navigator.pop(context); // close drawer first
-
-                final bool? updated = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const TemporaryBusChangePage(),
-                  ),
-                );
-
-                // Refresh bus info if user applied or cleared changes
-                if (updated == true) {
-                  await _loadBusInfo();
-                  await _checkStatuses();
-                }
-              },
-            ),
-
-            ListTile(
-              leading: const Icon(Icons.report_problem, color: Colors.red),
-              title: const Text("Issue Reporting"),
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const IssueReportingPage()),
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.settings),
-              title: const Text("Settings"),
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const DriverSettingsPage()),
-              ),
-            ),
-          ],
-        ),
-      ),
-
-        body: SingleChildScrollView(
-          child: Column(
-        children: [
-          // HEADER
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(20, 44, 20, 30),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF00BFA6), Color(0xFF00A896)],
-              ),
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(28),
-                bottomRight: Radius.circular(28),
-              ),
-            ),
-            child: Row(
-              children: [
-                Builder(
-                  builder: (context) => IconButton(
-                    icon: const Icon(Icons.menu, color: Colors.white),
-                    onPressed: () => Scaffold.of(context).openDrawer(),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                const CircleAvatar(
-                  radius: 22,
-                  backgroundColor: Colors.white,
-                  child: Icon(Icons.person, color: Color(0xFF00BFA6)),
-                ),
-                const SizedBox(width: 12),
-                Column(
+        drawer: Drawer(
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: [
+              const DrawerHeader(
+                decoration: BoxDecoration(color: Color(0xFF00BFA6)),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Driver Dashboard',
-                      style: TextStyle(color: Colors.white, fontSize: 22),
+                    CircleAvatar(
+                      radius: 28,
+                      backgroundColor: Colors.white,
+                      child: Icon(Icons.person, color: Color(0xFF00BFA6)),
                     ),
+                    SizedBox(height: 12),
                     Text(
-                      tripStarted
-                          ? (isTempBusActive
-                          ? 'TEMP ${tripMode ?? ""} DUTY'
-                          : '${tripMode ?? ""} DUTY')
-                          : 'OFF DUTY',
-                      style: const TextStyle(color: Colors.white70),
+                      "Driver",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
+              ),
 
-          const SizedBox(height: 20),
-
-          _infoCard(
-            title: 'Bus Information',
-            children: [
-              _infoRow('Route', permRouteName),
-              _infoRow('Bus Number', permBusNumber),
-              _infoRow('Shift', shift),
-            ],
-          ),
-
-          const SizedBox(height: 16),
-
-          if (isTempBusActive)
-            _infoCard(
-              title: "Temporary Bus Active",
-              titleColor: Colors.orange,
-              children: [
-                _infoRow("Temporary Bus", tempBusNumber ?? "-"),
-                _infoRow("Temporary Route", tempRouteName ?? "-"),
-              ],
-            ),
-
-          const SizedBox(height: 16),
-
-          _infoCard(
-            title: 'Location Status',
-            children: [
-              _statusRow('GPS', gpsOn, tripStarted),
-              _statusRow('Internet', internetOn, tripStarted),
-              _statusRow('Location Sync', locationSyncOn, tripStarted),
-            ],
-          ),
-
-          const SizedBox(height: 20),
-
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-            child: tripStarted
-                ? GestureDetector(
-              onTap: _endTripFromBackend,
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 18),
-                decoration: BoxDecoration(
-                  color: Colors.red,
-                  borderRadius: BorderRadius.circular(18),
+              ListTile(
+                leading: const Icon(Icons.person),
+                title: const Text("Profile"),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const DriverProfilePage()),
                 ),
-                child: const Center(
-                  child: Text(
-                    'End Trip',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600),
+              ),
+              ListTile(
+                leading: const Icon(Icons.map, color: Colors.blue),
+                title: const Text("Live Map"),
+                onTap: () {
+                  Navigator.pop(context);
+
+                  if (!tripStarted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("Start trip to view map")),
+                    );
+                    return;
+                  }
+
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => DriverFullMapPage(
+                        currentLatLng: _currentLatLng,
+                        marker: _driverMarker,
+                        routePoints: List.from(_routePoints),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.swap_horiz, color: Colors.orange),
+                title: const Text("Temporary Bus Change"),
+                onTap: () async {
+                  Navigator.pop(context); // close drawer first
+
+                  final bool? updated = await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const TemporaryBusChangePage(),
+                    ),
+                  );
+
+                  // Refresh bus info if user applied or cleared changes
+                  if (updated == true) {
+                    await _loadBusInfo();
+                    await _checkStatuses();
+                  }
+                },
+              ),
+
+              ListTile(
+                leading: const Icon(Icons.report_problem, color: Colors.red),
+                title: const Text("Issue Reporting"),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const IssueReportingPage()),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.settings),
+                title: const Text("Settings"),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const DriverSettingsPage()),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        body: SingleChildScrollView(
+          child: Column(
+            children: [
+              // HEADER
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 400),
+                curve: Curves.easeInOut,
+
+                width: double.infinity,
+                padding: EdgeInsets.fromLTRB(
+                  20,
+                  tripStarted ? 44 : 50,
+                  20,
+                  tripStarted ? 24 : 30,
+                ),
+
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: tripStarted
+                        ? const [
+                      Color(0xFF009688), // darker when active
+                      Color(0xFF00796B),
+                    ]
+                        : const [
+                      Color(0xFF00BFA6),
+                      Color(0xFF00A896),
+                    ],
+                  ),
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(28),
+                    bottomRight: Radius.circular(28),
+                  ),
+                ),
+
+                child: Row(
+                  children: [
+                    Builder(
+                      builder: (context) => IconButton(
+                        icon: const Icon(Icons.menu, color: Colors.white),
+                        onPressed: () => Scaffold.of(context).openDrawer(),
+                      ),
+                    ),
+
+                    const SizedBox(width: 8),
+
+                    const CircleAvatar(
+                      radius: 22,
+                      backgroundColor: Colors.white,
+                      child: Icon(Icons.person, color: Color(0xFF00BFA6)),
+                    ),
+
+                    const SizedBox(width: 12),
+
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Driver Dashboard',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                          ),
+                        ),
+
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 300),
+                          child: Text(
+                            tripStarted
+                                ? (isTempBusActive
+                                ? 'TEMP ${tripMode ?? ""} DUTY'
+                                : '${tripMode ?? ""} DUTY')
+                                : 'OFF DUTY',
+                            key: ValueKey(tripStarted),
+                            style: const TextStyle(color: Colors.white70),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
+              FadeTransition(
+                opacity: _fadeAnimation,
+                child: Transform.translate(
+                  offset: Offset(0, 20 * (1 - _fadeAnimation.value)),
+                  child: _infoCard(
+                    title: 'Bus Information',
+                    children: [
+                      _infoRow('Route', permRouteName),
+                      _infoRow('Bus Number', permBusNumber),
+                      _infoRow('Shift', shift),
+                    ],
                   ),
                 ),
               ),
-            )
-                : Column(
-              children: [
-                GestureDetector(
-                  onTap: () => _startTripWithMode("MORNING"),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 18),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF00BFA6),
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: const Center(
-                      child: Text(
-                        'Start Morning Trip',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600),
-                      ),
-                    ),
+
+              const SizedBox(height: 16),
+
+              if (isTempBusActive)
+                _infoCard(
+                  title: "Temporary Bus Active",
+                  titleColor: Colors.orange,
+                  children: [
+                    _infoRow("Temporary Bus", tempBusNumber ?? "-"),
+                    _infoRow("Temporary Route", tempRouteName ?? "-"),
+                  ],
+                ),
+
+              const SizedBox(height: 16),
+
+              FadeTransition(
+                opacity: _fadeAnimation,
+                child: Transform.translate(
+                  offset: Offset(0, 30 * (1 - _fadeAnimation.value)),
+                  child: _infoCard(
+                    title: 'Location Status',
+                    children: [
+                      _statusRow('GPS', gpsOn, tripStarted),
+                      _statusRow('Internet', internetOn, tripStarted),
+                      _statusRow('Location Sync', locationSyncOn, tripStarted),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 12),
-                GestureDetector(
-                  onTap: () => _startTripWithMode("EVENING"),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 18),
-                    decoration: BoxDecoration(
-                      color: Colors.orange,
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: const Center(
-                      child: Text(
-                        'Start Evening Trip',
-                        style: TextStyle(
+              ),
+
+              const SizedBox(height: 20),
+
+            FadeTransition(
+               opacity: _fadeAnimation,
+                child:Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 350),
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeIn,
+
+                  child: tripStarted
+                      ? GestureDetector(
+                    key: const ValueKey("endTrip"),
+
+                    onTap: _endTripFromBackend,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: const Center(
+                        child: Text(
+                          'End Trip',
+                          style: TextStyle(
                             color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600),
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
                     ),
+                  )
+
+                      : Column(
+                    key: const ValueKey("startTrip"),
+
+                    children: [
+                      GestureDetector(
+                        onTap: () => _startTripWithMode("MORNING"),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 18),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF00BFA6),
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: const Center(
+                            child: Text(
+                              'Start Morning Trip',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 12),
+
+                      GestureDetector(
+                        onTap: () => _startTripWithMode("EVENING"),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(vertical: 18),
+                          decoration: BoxDecoration(
+                            color: Colors.orange,
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: const Center(
+                            child: Text(
+                              'Start Evening Trip',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
+            ],
           ),
-        ],
-      ),
         )
     );
   }
@@ -805,7 +907,21 @@ class _statusRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          Icon(icon, color: color, size: 20),
+          active && tripStarted
+              ? TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0.9, end: 1.1),
+            duration: const Duration(seconds: 1),
+            curve: Curves.easeInOut,
+            builder: (context, value, child) {
+              return Transform.scale(
+                scale: value,
+                child: child,
+              );
+            },
+            onEnd: () {},
+            child: Icon(icon, color: color, size: 20),
+          )
+              : Icon(icon, color: color, size: 20),
           const SizedBox(width: 10),
           Expanded(child: Text(label)),
           Text(text,

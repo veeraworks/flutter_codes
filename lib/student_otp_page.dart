@@ -10,7 +10,7 @@ class StudentOtpPage extends StatefulWidget {
   final String verificationId;
   final String regNo;
   final String phoneNumber;
-  final bool isSignup; // 🔥 differentiate login & signup
+  final bool isSignup;
 
   const StudentOtpPage({
     super.key,
@@ -26,7 +26,6 @@ class StudentOtpPage extends StatefulWidget {
 
 class _StudentOtpPageState extends State<StudentOtpPage> {
   final TextEditingController otpController = TextEditingController();
-  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   bool isLoading = false;
 
@@ -41,15 +40,14 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
     setState(() => isLoading = true);
 
     try {
-      // 🔐 STEP 1: Verify OTP via Firebase
-      PhoneAuthCredential credential =
-      PhoneAuthProvider.credential(
-        verificationId: widget.verificationId,
-        smsCode: otpController.text.trim(),
-      );
-
-      await _auth.signInWithCredential(credential);
-
+      // ✅ DEV MODE OTP (TEMPORARY)
+      if (otpController.text.trim() != "123456") {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Invalid OTP")),
+        );
+        setState(() => isLoading = false);
+        return;
+      }
       // 🔥 STEP 2: Call backend
       final response = await ApiService.post(
         widget.isSignup

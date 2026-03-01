@@ -163,7 +163,19 @@ class _DriverLoginPageState extends State<DriverLoginPage>
           ),
 
           Positioned.fill(
-            child: Container(color: Colors.white.withOpacity(0.50)),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.white.withOpacity(0.15),
+                    Colors.white.withOpacity(0.85),
+                    Colors.white,
+                  ],
+                ),
+              ),
+            ),
           ),
 
           Center(

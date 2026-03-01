@@ -217,6 +217,40 @@ class _TemporaryBusChangePageState
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+
+            /// ✅ STATUS INDICATOR (ADD THIS BLOCK)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: isTempActive
+                    ? Colors.orange.shade100
+                    : Colors.green.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    isTempActive
+                        ? Icons.swap_horiz
+                        : Icons.check_circle,
+                    color:
+                    isTempActive ? Colors.orange : Colors.green,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    isTempActive
+                        ? "Temporary Bus Active"
+                        : "Using Permanent Bus",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
             // -------- CURRENT BUS INFO --------
             Container(
               padding: const EdgeInsets.all(16),

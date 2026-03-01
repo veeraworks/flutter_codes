@@ -65,24 +65,37 @@ Future<void> main() async {
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
   await FirebaseMessaging.instance.requestPermission();
+  await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>()
+      ?.requestNotificationsPermission();
 
   /// 🔥 FOREGROUND LISTENER
   FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
-    if (message.notification != null) {
-      await flutterLocalNotificationsPlugin.show(
-        message.hashCode,
-        message.notification!.title,
-        message.notification!.body,
-        const NotificationDetails(
-          android: AndroidNotificationDetails(
-            'bus_alerts',
-            'Bus Alerts',
-            importance: Importance.high,
-            priority: Priority.high,
-          ),
+
+    final title =
+        message.notification?.title ??
+            message.data['title'] ??
+            "Bus Update";
+
+    final body =
+        message.notification?.body ??
+            message.data['body'] ??
+            "";
+
+    await flutterLocalNotificationsPlugin.show(
+      message.hashCode,
+      title,
+      body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'bus_alerts',
+          'Bus Alerts',
+          importance: Importance.max,
+          priority: Priority.high,
         ),
-      );
-    }
+      ),
+    );
   });
 
   /// 🔥 CLICK HANDLER
