@@ -1043,28 +1043,67 @@ class _NotificationsPageState extends State<NotificationsPage> {
       regNo = savedRegNo;
     });
   }
+  Future<void> _clearAllNotifications() async {
+    if (regNo == null) return;
 
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Clear all notifications?"),
+        content: const Text(
+            "This will permanently delete all notification history."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text("Clear All"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    await FirebaseDatabase.instance
+        .ref("notifications/$regNo")
+        .remove();
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("All notifications cleared"),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
   Future<void> _markAllAsRead() async {
     final prefs = await SharedPreferences.getInstance();
     final regNo = prefs.getString("regNo");
 
     if (regNo == null) return;
 
-    final snapshot = await FirebaseDatabase.instance
-        .ref("notifications/$regNo")
-        .get();
+    final ref =
+    FirebaseDatabase.instance.ref("notifications/$regNo");
+
+    final snapshot = await ref.get();
 
     if (!snapshot.exists) return;
 
     final data = Map<String, dynamic>.from(snapshot.value as Map);
 
-    for (var key in data.keys) {
-      await FirebaseDatabase.instance
-          .ref("notifications/$regNo/$key")
-          .update({"read": true});
-    }
-  }
+    Map<String, dynamic> updates = {};
 
+    for (var key in data.keys) {
+      updates["$key/read"] = true;
+    }
+
+    await ref.update(updates);
+  }
   String formatTime(dynamic timestamp) {
     if (timestamp == null) return "Just now";
 
@@ -1097,6 +1136,14 @@ class _NotificationsPageState extends State<NotificationsPage> {
           style: TextStyle(color: Colors.white),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          if (regNo != null)
+            IconButton(
+              icon: const Icon(Icons.delete_sweep, color: Colors.white),
+              tooltip: "Clear All",
+              onPressed: _clearAllNotifications,
+            ),
+        ],
       ),
       body: StreamBuilder(
         stream: FirebaseDatabase.instance
