@@ -228,6 +228,7 @@ class _StudentSignupStep1State extends State<StudentSignupStep1> {
                             isLoading ? null : checkRegisterNumber,
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.teal,
+                              foregroundColor: Colors.white,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(14),
                               ),
