@@ -7,6 +7,8 @@ import 'service/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'driver_full_map_page.dart';
+import 'package:flutter_polyline_points/flutter_polyline_points.dart';
+import 'dart:math';
 
 class DriverMapPage extends StatefulWidget {
   const DriverMapPage({super.key});
@@ -25,9 +27,22 @@ class _DriverMapPageState extends State<DriverMapPage> {
   final DatabaseReference _busRef =
   FirebaseDatabase.instance.ref();
 
+  bool _followBus = true;
 
+  LatLng? _cameraPosition;
+  Timer? _cameraTimer;
+
+  double _lookAheadDistance = 40; // meters ahead
+  IconData _navIcon = Icons.navigation;
   double? _etaMinutes;
   String? _nextStopName;
+  List<dynamic> _navSteps = [];
+  String? _nextInstruction;
+  String? _instructionDistance;
+
+  double? _remainingMeters;
+  LatLng? _currentStepTarget;
+
   Timer? _etaTimer;
   BitmapDescriptor? _busIcon;
   Set<Marker> _markers = {};
@@ -37,6 +52,8 @@ class _DriverMapPageState extends State<DriverMapPage> {
   List<Map<String, dynamic>> _routeStops = [];
   List<LatLng> _routePoints = [];
   bool _arrivalTriggered = false;
+
+  bool _routeFitted = false;
 
   StreamSubscription<Position>? _gpsSubscription;
 
@@ -48,7 +65,6 @@ class _DriverMapPageState extends State<DriverMapPage> {
   void initState() {
     super.initState();
     _initDriverMap();
-
   }
 
   Future<void> _initDriverMap() async {
@@ -71,6 +87,48 @@ class _DriverMapPageState extends State<DriverMapPage> {
     );
   }
 
+  void _updateNavigationInstruction() {
+    if (_navSteps.isEmpty) return;
+
+    final step = _navSteps.first;
+
+    String maneuver = step["maneuver"] ?? "straight";
+
+    IconData icon;
+
+    switch (maneuver) {
+      case "turn-left":
+        icon = Icons.turn_left;
+        break;
+
+      case "turn-right":
+        icon = Icons.turn_right;
+        break;
+
+      case "keep-left":
+        icon = Icons.turn_slight_left;
+        break;
+
+      case "keep-right":
+        icon = Icons.turn_slight_right;
+        break;
+
+      case "roundabout-left":
+      case "roundabout-right":
+        icon = Icons.roundabout_left;
+        break;
+
+      default:
+        icon = Icons.straight;
+    }
+
+    setState(() {
+      _nextInstruction = step["instruction"];
+      _instructionDistance = step["distanceText"];
+      _navIcon = icon;
+    });
+  }
+
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     busId = prefs.getString("busId");
@@ -79,313 +137,442 @@ class _DriverMapPageState extends State<DriverMapPage> {
   }
 
   Future<void> _loadBusIcon() async {
-  _busIcon = await BitmapDescriptor.fromAssetImage(
-  const ImageConfiguration(size: Size(100, 100)),
-  "assets/images/bus_icon_map.png",
-  );
-  }
-
-  // ================= DRIVER CAMERA =================
-
-  void _updateDriverCamera(LatLng pos, double bearing) {
-  if (_mapController == null) return;
-
-  _mapController?.animateCamera(
-    CameraUpdate.newCameraPosition(
-  CameraPosition(
-  target: pos,
-  zoom: 17,
-  tilt: 55,
-  bearing: bearing,
-  ),
-  ),
-  );
+    _busIcon = await BitmapDescriptor.fromAssetImage(
+      const ImageConfiguration(size: Size(100, 100)),
+      "assets/images/bus_icon_map.png",
+    );
   }
 
   // ================= GPS LISTENER =================
 
   Future<void> _startDriverGPS() async {
-  bool enabled = await Geolocator.isLocationServiceEnabled();
-  if (!enabled) return;
+    bool enabled = await Geolocator.isLocationServiceEnabled();
+    if (!enabled) return;
 
-  await Geolocator.requestPermission();
+    await Geolocator.requestPermission();
 
-  _gpsSubscription =
-  Geolocator.getPositionStream(
-  locationSettings: const LocationSettings(
-  accuracy: LocationAccuracy.bestForNavigation,
-  distanceFilter: 3,
-  ),
-  ).listen((Position position) {
-  _driverLocation = LatLng(
-  position.latitude,
-  position.longitude,
-  );
+    _gpsSubscription =
+        Geolocator.getPositionStream(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.bestForNavigation,
+            distanceFilter: 3,
+          ),
+        ).listen((Position position) {
+          if (!mounted) return;
 
-  _driverBearing = position.heading;
+          final rawPoint = LatLng(
+            position.latitude,
+            position.longitude,
+          );
 
-  _updateDriverCamera(
-  _driverLocation!,
-  _driverBearing,
-  );
+          _driverLocation = _snapToRoute(rawPoint);
+          _driverBearing = position.heading;
 
-  _updateDriverMarker();
-  _publishDriverLocation();
-  _checkStopArrival();
-  });
+          _startNavigationCamera(_driverLocation!);
+
+          _updateDriverMarker();
+          _publishDriverLocation();
+          _updateStepDistance();
+          _checkStopArrival();
+        });
+  }
+
+  void _startNavigationCamera(LatLng busPos) {
+    if (!_followBus || _mapController == null) return;
+
+    _cameraTimer?.cancel();
+
+    _cameraTimer =
+        Timer.periodic(const Duration(milliseconds: 40), (timer) {
+          LatLng lookAhead =
+          _projectForward(busPos, _driverBearing, _lookAheadDistance);
+
+          _cameraPosition ??= lookAhead;
+
+          double lat = _cameraPosition!.latitude +
+              (lookAhead.latitude - _cameraPosition!.latitude) * 0.08;
+
+          double lng = _cameraPosition!.longitude +
+              (lookAhead.longitude - _cameraPosition!.longitude) * 0.08;
+
+          _cameraPosition = LatLng(lat, lng);
+
+          _mapController!.moveCamera(
+            CameraUpdate.newCameraPosition(
+              CameraPosition(
+                target: _cameraPosition!,
+                zoom: 17,
+                tilt: 55,
+                bearing: _driverBearing,
+              ),
+            ),
+          );
+        });
+  }
+
+  LatLng _projectForward(LatLng start,
+      double bearing,
+      double distanceMeters,) {
+    const earthRadius = 6371000.0;
+
+    double brng = bearing * (pi / 180);
+
+    double lat1 = start.latitude * (pi / 180);
+    double lon1 = start.longitude * (pi / 180);
+
+    double lat2 = asin(
+      sin(lat1) * cos(distanceMeters / earthRadius) +
+          cos(lat1) *
+              sin(distanceMeters / earthRadius) *
+              cos(brng),
+    );
+
+    double lon2 = lon1 +
+        atan2(
+          sin(brng) *
+              sin(distanceMeters / earthRadius) *
+              cos(lat1),
+          cos(distanceMeters / earthRadius) -
+              sin(lat1) * sin(lat2),
+        );
+
+    return LatLng(lat2 * 180 / pi, lon2 * 180 / pi);
   }
 
 // ================= DRIVER ETA =================
 
   Future<void> _fetchDriverETA() async {
-  if (busId == null) return;
+    if (busId == null) return;
 
-  try {
-  final response =
-  await ApiService.get("/drivers/eta/$busId");
+    try {
+      final response =
+      await ApiService.get("/drivers/eta/$busId");
 
-  if (response.statusCode != 200) return;
+      if (response.statusCode != 200) return;
 
-  final data = jsonDecode(response.body);
+      final data = jsonDecode(response.body);
 
-  setState(() {
-  _etaMinutes =
-  (data["etaMinutes"] as num?)?.toDouble();
-  _nextStopName = data["nextStop"];
-  });
-  _fetchRouteStops();
-  } catch (e) {
-  print("Driver ETA error: $e");
-  }
+      _navSteps = data["steps"] ?? [];
+      _updateNavigationInstruction();
+      _prepareStepTarget();
+
+      setState(() {
+        final duration = data["durationValue"];
+
+        if (duration != null && duration is num) {
+          _etaMinutes = duration.toDouble() / 60.0;
+        } else {
+          _etaMinutes = null;
+        }
+        _nextStopName = data["nextStop"];
+      });
+      _fetchRouteStops();
+    } catch (e) {
+      print("Driver ETA error: $e");
+    }
   }
 
 // ================= DISTANCE HELPER =================
 
   double _distanceMeters(LatLng a, LatLng b) {
-  return Geolocator.distanceBetween(
-  a.latitude,
-  a.longitude,
-  b.latitude,
-  b.longitude,
-  );
+    return Geolocator.distanceBetween(
+      a.latitude,
+      a.longitude,
+      b.latitude,
+      b.longitude,
+    );
   }
 
   BitmapDescriptor _getStopColor(String stopName) {
-  if (_nextStopName == null) {
-  return BitmapDescriptor.defaultMarkerWithHue(
-  BitmapDescriptor.hueOrange,
-  );
+    if (_nextStopName == null) {
+      return BitmapDescriptor.defaultMarkerWithHue(
+        BitmapDescriptor.hueOrange,
+      );
+    }
+
+    if (stopName == _nextStopName) {
+      return BitmapDescriptor.defaultMarkerWithHue(
+        BitmapDescriptor.hueBlue,
+      ); // NEXT STOP
+    }
+
+    final nextIndex = _routeStops.indexWhere(
+          (s) => s["stopName"] == _nextStopName,
+    );
+
+    final stopIndex = _routeStops.indexWhere(
+          (s) => s["stopName"] == stopName,
+    );
+
+    if (stopIndex < nextIndex) {
+      return BitmapDescriptor.defaultMarkerWithHue(
+        BitmapDescriptor.hueGreen,
+      ); // PASSED
+    }
+
+    return BitmapDescriptor.defaultMarkerWithHue(
+      BitmapDescriptor.hueOrange,
+    ); // UPCOMING
   }
 
-  if (stopName == _nextStopName) {
-  return BitmapDescriptor.defaultMarkerWithHue(
-  BitmapDescriptor.hueBlue,
-  ); // NEXT STOP
+// ================= MAP MATCHING (ROUTE ENGINE) =================
+
+  LatLng _snapToRoute(LatLng gpsPoint) {
+    if (_routePoints.isEmpty) return gpsPoint;
+
+    double minDistance = double.infinity;
+    LatLng closestPoint = gpsPoint;
+
+    for (final p in _routePoints) {
+      final d = Geolocator.distanceBetween(
+        gpsPoint.latitude,
+        gpsPoint.longitude,
+        p.latitude,
+        p.longitude,
+      );
+
+      if (d < minDistance) {
+        minDistance = d;
+        closestPoint = p;
+      }
+    }
+
+    return closestPoint;
   }
 
-  final nextIndex = _routeStops.indexWhere(
-  (s) => s["stopName"] == _nextStopName,
-  );
+  void _prepareStepTarget() {
+    if (_routePoints.isEmpty || _driverLocation == null) return;
 
-  final stopIndex = _routeStops.indexWhere(
-  (s) => s["stopName"] == stopName,
-  );
+    // find closest route point
+    int closestIndex = 0;
+    double minDist = double.infinity;
 
-  if (stopIndex < nextIndex) {
-  return BitmapDescriptor.defaultMarkerWithHue(
-  BitmapDescriptor.hueGreen,
-  ); // PASSED
-  }
+    for (int i = 0; i < _routePoints.length; i++) {
+      final d = Geolocator.distanceBetween(
+        _driverLocation!.latitude,
+        _driverLocation!.longitude,
+        _routePoints[i].latitude,
+        _routePoints[i].longitude,
+      );
 
-  return BitmapDescriptor.defaultMarkerWithHue(
-  BitmapDescriptor.hueOrange,
-  ); // UPCOMING
+      if (d < minDist) {
+        minDist = d;
+        closestIndex = i;
+      }
+    }
+
+    int targetIndex = (closestIndex + 20)
+        .clamp(0, _routePoints.length - 1);
+
+    _currentStepTarget = _routePoints[targetIndex];
   }
 
 // ================= AUTO STOP DETECTION =================
 
   Future<void> _checkStopArrival() async {
-  if (_driverLocation == null ||
-  _nextStopName == null ||
-  _arrivalTriggered) return;
+    if (_driverLocation == null ||
+        _nextStopName == null ||
+        _arrivalTriggered) return;
 
-  final nextStop = _routeStops.firstWhere(
-  (s) => s["stopName"] == _nextStopName,
-  orElse: () => {},
-  );
+    final nextStop = _routeStops.firstWhere(
+          (s) => s["stopName"] == _nextStopName,
+      orElse: () => {},
+    );
 
-  if (nextStop.isEmpty) return;
+    if (nextStop.isEmpty) return;
 
-  LatLng stopPos = LatLng(
-  (nextStop["lat"] as num).toDouble(),
-  (nextStop["lng"] as num).toDouble(),
-  );
+    LatLng stopPos = LatLng(
+      (nextStop["lat"] as num).toDouble(),
+      (nextStop["lng"] as num).toDouble(),
+    );
 
-  double distance =
-  _distanceMeters(_driverLocation!, stopPos);
+    double distance =
+    _distanceMeters(_driverLocation!, stopPos);
 
-  // 🚍 ARRIVED CONDITION (25 meters)
-  if (distance < 25) {
-  _arrivalTriggered = true;
+    // 🚍 ARRIVED CONDITION (25 meters)
+    if (distance < 25) {
+      _arrivalTriggered = true;
 
-  print("✅ Arrived at $_nextStopName");
+      print("✅ Arrived at $_nextStopName");
 
-  await _notifyBackendArrival();
+      await _notifyBackendArrival();
+    }
   }
+
+  void _updateStepDistance() {
+    if (_driverLocation == null || _currentStepTarget == null) return;
+
+    final distance = Geolocator.distanceBetween(
+      _driverLocation!.latitude,
+      _driverLocation!.longitude,
+      _currentStepTarget!.latitude,
+      _currentStepTarget!.longitude,
+    );
+
+    setState(() {
+      _remainingMeters = distance;
+    });
   }
 
 // ================= BACKEND ARRIVAL NOTIFY =================
 
   Future<void> _notifyBackendArrival() async {
-  if (busId == null || _nextStopName == null) return;
+    if (busId == null || _nextStopName == null) return;
 
-  try {
-  await ApiService.post(
-  "/drivers/arrived",
-  {
-  "busId": busId,
-  "stopName": _nextStopName,
-  },
-  );
+    try {
+      await ApiService.post(
+        "/drivers/arrived",
+        {
+          "busId": busId,
+          "stopName": _nextStopName,
+        },
+      );
 
-  print("📡 Backend notified: arrived at $_nextStopName");
+      print("📡 Backend notified: arrived at $_nextStopName");
 
-  // allow next detection after cooldown
-  Future.delayed(const Duration(seconds: 20), () {
-  _arrivalTriggered = false;
-  });
-  } catch (e) {
-  print("Arrival notify error: $e");
+      // allow next detection after cooldown
+      Future.delayed(const Duration(seconds: 20), () {
+        _arrivalTriggered = false;
+      });
+    } catch (e) {
+      print("Arrival notify error: $e");
+    }
   }
-  }
 
-  // ================= DRIVER MARKER =================
+// ================= DRIVER MARKER =================
 
   void _updateDriverMarker() {
-  if (_driverLocation == null) return;
+    if (_driverLocation == null) return;
 
-  _markers.removeWhere(
-  (m) => m.markerId.value == "bus");
+    _markers.removeWhere(
+            (m) => m.markerId.value == "bus");
 
-  _markers.add(
-  Marker(
-  markerId: const MarkerId("bus"),
-  position: _driverLocation!,
-  icon: _busIcon ?? BitmapDescriptor.defaultMarker,
-  rotation: _driverBearing,
-  anchor: const Offset(0.5, 0.5),
-  flat: true,
-  ),
-  );
+    _markers.add(
+      Marker(
+        markerId: const MarkerId("bus"),
+        position: _driverLocation!,
+        icon: _busIcon ?? BitmapDescriptor.defaultMarker,
+        rotation: _driverBearing,
+        anchor: const Offset(0.5, 0.5),
+        flat: true,
+      ),
+    );
 
-  setState(() {});
+    setState(() {});
   }
 
 // ================= FIREBASE PUBLISH =================
 
   Future<void> _publishDriverLocation() async {
-  if (busId == null || _driverLocation == null) return;
+    if (busId == null || _driverLocation == null) return;
 
-  try {
-  await _busRef
-      .child("buses/$busId/current")
-      .update({
-  "lat": _driverLocation!.latitude,
-  "lng": _driverLocation!.longitude,
-  "bearing": _driverBearing,
-  "timestamp": DateTime
-      .now()
-      .millisecondsSinceEpoch,
-  });
-  } catch (e) {
-  print("Firebase publish error: $e");
-  }
+    try {
+      await _busRef
+          .child("buses/$busId/current")
+          .update({
+        "lat": _driverLocation!.latitude,
+        "lng": _driverLocation!.longitude,
+        "bearing": _driverBearing,
+        "timestamp": DateTime
+            .now()
+            .millisecondsSinceEpoch,
+      });
+    } catch (e) {
+      print("Firebase publish error: $e");
+    }
   }
 
-  // ================= ROUTE STOPS =================
+// ================= ROUTE STOPS =================
 
   Future<void> _fetchRouteStops() async {
-  if (busId == null) return;
+    if (busId == null) return;
 
-  try {
-  final response =
-  await ApiService.get("/routes/$busId");
+    try {
+      final response =
+      await ApiService.get("/routes/$busId");
 
-  if (response.statusCode != 200) return;
+      if (response.statusCode != 200) return;
 
-  final List stops = jsonDecode(response.body);
-  _routeStops = List<Map<String, dynamic>>.from(stops);
+      final List stops = jsonDecode(response.body);
+      _routeStops = List<Map<String, dynamic>>.from(stops);
 
-  Set<Marker> stopMarkers = {};
-  List<LatLng> routePoints = [];
+      Set<Marker> stopMarkers = {};
+      List<LatLng> routePoints = [];
 
-  for (var stop in stops) {
-  LatLng pos = LatLng(
-  (stop["lat"] as num).toDouble(),
-  (stop["lng"] as num).toDouble(),
-  );
+      for (var stop in stops) {
+        bool isLastStop = stop["stopOrder"] ==
+            stops.last["stopOrder"];
+        LatLng pos = LatLng(
+          (stop["lat"] as num).toDouble(),
+          (stop["lng"] as num).toDouble(),
+        );
 
-  routePoints.add(pos);
+        routePoints.add(pos);
 
-  stopMarkers.add(
-  Marker(
-  markerId:
-  MarkerId(stop["stopName"]),
-  position: pos,
-  infoWindow: InfoWindow(
-  title: stop["stopName"],
-  ),
-  icon: _getStopColor(stop["stopName"]),
-  ),
-  );
+        stopMarkers.add(
+          Marker(
+            markerId:
+            MarkerId(stop["stopName"]),
+            position: pos,
+            infoWindow: InfoWindow(
+              title: stop["stopName"],
+            ),
+            icon: isLastStop
+                ? BitmapDescriptor.defaultMarkerWithHue(
+                BitmapDescriptor.hueRed) // 🏫 DROP LOCATION
+                : _getStopColor(stop["stopName"]),
+          ),
+        );
+      }
+
+      setState(() {
+        _markers = {
+          ...stopMarkers,
+          if (_driverLocation != null)
+            Marker(
+              markerId: const MarkerId("bus"),
+              position: _driverLocation!,
+              icon: _busIcon ?? BitmapDescriptor.defaultMarker,
+              rotation: _driverBearing,
+              anchor: const Offset(0.5, 0.5),
+              flat: true,
+            )
+        };
+
+        _routePoints = routePoints;
+      });
+      if (!_routeFitted) {
+        _fitRouteToScreen(routePoints);
+        _routeFitted = true;
+      }
+    } catch (e) {
+      print("Route fetch error: $e");
+    }
   }
 
-  setState(() {
-  _markers.removeWhere(
-  (m) => m.markerId.value != "bus");
-
-  _markers.addAll(stopMarkers);
-  _routePoints = routePoints;
-  });
-
-  _fitRouteToScreen(routePoints);
-  } catch (e) {
-  print("Route fetch error: $e");
-  }
-  }
-  // ================= ROUTE POLYLINE LISTENER =================
+// ================= ROUTE POLYLINE LISTENER =================
   Future<void> _listenRoutePolyline() async {
     if (busId == null) return;
 
     _polylineListener?.cancel();
 
     _polylineListener = FirebaseDatabase.instance
-        .ref("routes/${busId!.toUpperCase()}/polyline")
+        .ref("busRoutes/$busId/fullRoadPolyline")
         .onValue
         .listen((event) {
+      final data = event.snapshot.value;
 
-      // ✅ event is valid ONLY here
-      if (event.snapshot.value == null) {
-        setState(() {
-          _polylines.clear();
-        });
-        return;
-      }
+      if (data == null) return;
 
-      final data = event.snapshot.value as Map;
+      String encodedPolyline = data.toString();
 
-      List<LatLng> points = [];
+      PolylinePoints polylinePoints = PolylinePoints();
 
-      data.forEach((key, value) {
-        final p = Map<String, dynamic>.from(value);
+      List<PointLatLng> decoded =
+      polylinePoints.decodePolyline(encodedPolyline);
 
-        points.add(
-          LatLng(
-            (p["lat"] as num).toDouble(),
-            (p["lng"] as num).toDouble(),
-          ),
-        );
-      });
+      List<LatLng> points =
+      decoded.map((p) => LatLng(p.latitude, p.longitude)).toList();
 
       setState(() {
         _polylines = {
@@ -394,166 +581,254 @@ class _DriverMapPageState extends State<DriverMapPage> {
             points: points,
             width: 6,
             color: Colors.blue,
-            geodesic: true,
-          )
+          ),
         };
+
+        // 🔥 SAVE FULL ROAD POINTS FOR SNAPPING
+        _routePoints = points;
       });
     });
   }
 
-  // ================= FIT ROUTE =================
+// ================= FIT ROUTE =================
 
   void _fitRouteToScreen(List<LatLng> points) {
-  if (_mapController == null || points.isEmpty) return;
+    if (_mapController == null || points.isEmpty) return;
 
-  double minLat = points.first.latitude;
-  double maxLat = points.first.latitude;
-  double minLng = points.first.longitude;
-  double maxLng = points.first.longitude;
+    double minLat = points.first.latitude;
+    double maxLat = points.first.latitude;
+    double minLng = points.first.longitude;
+    double maxLng = points.first.longitude;
 
-  for (var p in points) {
-  if (p.latitude < minLat) minLat = p.latitude;
-  if (p.latitude > maxLat) maxLat = p.latitude;
-  if (p.longitude < minLng) minLng = p.longitude;
-  if (p.longitude > maxLng) maxLng = p.longitude;
+    for (var p in points) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
+    }
+
+    LatLngBounds bounds = LatLngBounds(
+      southwest: LatLng(minLat, minLng),
+      northeast: LatLng(maxLat, maxLng),
+    );
+
+    _mapController?.animateCamera(
+      CameraUpdate.newLatLngBounds(bounds, 80),
+    );
   }
 
-  LatLngBounds bounds = LatLngBounds(
-  southwest: LatLng(minLat, minLng),
-  northeast: LatLng(maxLat, maxLng),
-  );
-
-  _mapController?.animateCamera(
-  CameraUpdate.newLatLngBounds(bounds, 80),
-  );
-  }
-
-  // ================= DISPOSE =================
+// ================= DISPOSE =================
 
   @override
   void dispose() {
-  _gpsSubscription?.cancel();
-  _polylineListener?.cancel();
-  _etaTimer?.cancel();
-  super.dispose();
+    _gpsSubscription?.cancel();
+    _polylineListener?.cancel();
+    _etaTimer?.cancel();
+    _cameraTimer?.cancel();
+    super.dispose();
   }
 
-  // ================= UI =================
+// ================= UI =================
 
   @override
   Widget build(BuildContext context) {
-  return Scaffold(
-  appBar: AppBar(
-  title: const Text("Driver Navigation"),
-  ),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Driver Navigation"),
+      ),
 
-  body: Stack(
-  children: [
+      body: Stack(
+        children: [
 
-  // 🗺️ GOOGLE MAP
-  GoogleMap(
-  initialCameraPosition: const CameraPosition(
-  target: LatLng(13.0827, 80.2707),
-  zoom: 14,
-  ),
-  onMapCreated: (controller) {
-  _mapController = controller;
-  },
-  myLocationEnabled: true,
-  myLocationButtonEnabled: false,
-  markers: _markers,
-  polylines: _polylines,
-  ),
+          // 🚍 DRIVER NEXT STOP PANEL
 
-  Positioned(
-  top: 20,
-  right: 20,
-  child: FloatingActionButton(
-  heroTag: "fullMap",
-  backgroundColor: Colors.black87,
-  child: const Icon(Icons.fullscreen),
-  onPressed: () {
-  if (_driverLocation == null) return;
+          // 🔥 TURN BY TURN CARD
+          if (_nextInstruction != null)
+            Positioned(
+              top: 90,
+              left: 20,
+              right: 20,
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 8,
+                    )
+                  ],
+                ),
+                child: Row(
+                  children: [
 
-  Navigator.push(
-  context,
-  MaterialPageRoute(
-  builder: (_) => DriverFullMapPage(
-  currentLatLng: _driverLocation!,
-  marker: _markers.firstWhere(
-  (m) => m.markerId.value == "bus",
-  orElse: () => Marker(
-  markerId: const MarkerId("bus"),
-  position: _driverLocation!,
-  ),
-  ),
-  routePoints: _routePoints,
-  ),
-  ),
-  );
-  },
-  ),
-  ),
+                    Icon(
+                      _navIcon,
+                      size: 32,
+                      color: Colors.blue,
+                    ),
 
-  // 🚍 DRIVER NEXT STOP PANEL
-  if (_nextStopName != null)
-  Positioned(
-  bottom: 20,
-  left: 20,
-  right: 20,
-  child: Container(
-  padding: const EdgeInsets.all(16),
-  decoration: BoxDecoration(
-  color: Colors.black87,
-  borderRadius: BorderRadius.circular(14),
-  boxShadow: const [
-  BoxShadow(
-  color: Colors.black26,
-  blurRadius: 10,
-  offset: Offset(0, 4),
-  )
-  ],
-  ),
-  child: Column(
-  mainAxisSize: MainAxisSize.min,
-  children: [
+                    const SizedBox(width: 12),
 
-  const Text(
-  "NEXT STOP",
-  style: TextStyle(
-  color: Colors.white70,
-  fontSize: 12,
-  letterSpacing: 1.2,
-  ),
-  ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
 
-  const SizedBox(height: 6),
+                          Text(
+                            _nextInstruction!,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
 
-  Text(
-  _nextStopName!,
-  style: const TextStyle(
-  color: Colors.white,
-  fontSize: 22,
-  fontWeight: FontWeight.bold,
-  ),
-  ),
+                          Text(
+                            _remainingMeters != null
+                                ? "in ${_remainingMeters!.toInt()} m"
+                                : "in $_instructionDistance",
+                            style: const TextStyle(
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
 
-  if (_etaMinutes != null) ...[
-  const SizedBox(height: 6),
-  Text(
-  "ETA ${_etaMinutes!.toInt()} mins",
-  style: const TextStyle(
-  color: Colors.white,
-  fontSize: 16,
-  ),
-  ),
-  ],
-  ],
-  ),
-  ),
-  ),
-  ],
-  ),
-  );
+          Positioned(
+            bottom: 120,
+            right: 20,
+            child: FloatingActionButton(
+              backgroundColor:
+              _followBus ? Colors.blue : Colors.grey,
+              onPressed: () {
+                setState(() {
+                  _followBus = !_followBus;
+                });
+              },
+              child: Icon(
+                _followBus
+                    ? Icons.navigation
+                    : Icons.navigation_outlined,
+              ),
+            ),
+          ),
+
+
+          // 🗺️ GOOGLE MAP
+          GoogleMap(
+            initialCameraPosition: const CameraPosition(
+              target: LatLng(13.0827, 80.2707),
+              zoom: 14,
+            ),
+            onMapCreated: (controller) async {
+              _mapController = controller;
+
+              // 🔥 LOAD STOPS AFTER MAP READY
+              await _fetchRouteStops();
+            },
+            myLocationEnabled: true,
+            myLocationButtonEnabled: false,
+            markers: _markers,
+            polylines: _polylines,
+          ),
+
+          Positioned(
+            top: 20,
+            right: 20,
+            child: FloatingActionButton(
+              heroTag: "fullMap",
+              backgroundColor: Colors.black87,
+              child: const Icon(Icons.fullscreen),
+              onPressed: () {
+                if (_driverLocation == null) return;
+
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        DriverFullMapPage(
+                          currentLatLng: _driverLocation!,
+                          marker: _markers.firstWhere(
+                                (m) => m.markerId.value == "bus",
+                            orElse: () =>
+                                Marker(
+                                  markerId: const MarkerId("bus"),
+                                  position: _driverLocation!,
+                                ),
+                          ),
+                          routePoints: _routePoints,
+                        ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // 🚍 DRIVER NEXT STOP PANEL
+          if (_nextStopName != null)
+            Positioned(
+              bottom: 20,
+              left: 20,
+              right: 20,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 10,
+                      offset: Offset(0, 4),
+                    )
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+
+                    const Text(
+                      "NEXT STOP",
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+
+                    const SizedBox(height: 6),
+
+                    Text(
+                      _nextStopName!,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+
+                    if (_etaMinutes != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        "ETA ${_etaMinutes!.toInt()} mins",
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }

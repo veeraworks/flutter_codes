@@ -23,7 +23,8 @@ class DriverHomePage extends StatefulWidget {
 
 }
 
-class _DriverHomePageState extends State<DriverHomePage> {
+class _DriverHomePageState extends State<DriverHomePage>
+    with SingleTickerProviderStateMixin {
   bool tripStarted = false;
   String? tripMode;
   // 🔑 BUS INFO STATE (ADDED)
@@ -49,7 +50,10 @@ class _DriverHomePageState extends State<DriverHomePage> {
   String? currentTripId;
   StreamSubscription<Position>? positionStream;
   StreamSubscription? _tempBusListener;
-
+  late AnimationController _animController;
+  late Animation<double> _fadeAnim;
+  late Animation<Offset> _slideAnim;
+  bool _buttonPressed = false;
   // 🗺️ MAP STATE
   GoogleMapController? _mapController;
   Marker? _driverMarker;
@@ -61,6 +65,27 @@ class _DriverHomePageState extends State<DriverHomePage> {
   @override
   void initState() {
     super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+
+    _fadeAnim = CurvedAnimation(
+      parent: _animController,
+      curve: Curves.easeOut,
+    );
+
+    _slideAnim = Tween<Offset>(
+      begin: const Offset(0, -0.15),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _animController,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+
+    _animController.forward();
     _initialize();
 
     _gpsCheckTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
@@ -89,7 +114,11 @@ class _DriverHomePageState extends State<DriverHomePage> {
       });
 
       if (tripStarted && busId != null) {
-        FlutterBackgroundService().startService();
+        final service = FlutterBackgroundService();
+
+        if (!(await service.isRunning())) {
+          service.startService();
+        }
         FlutterBackgroundService().invoke("setBusId", {
           "busId": busId
         });
@@ -109,6 +138,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     positionStream?.cancel();
     _tempBusListener?.cancel();
     _gpsCheckTimer?.cancel();
+    _animController.dispose();
     super.dispose();
   }
   // ================= LOAD BUS ID ====================================
@@ -570,65 +600,73 @@ class _DriverHomePageState extends State<DriverHomePage> {
           child: Column(
             children: [
               // HEADER
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(20, 44, 20, 30),
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Color(0xFF00BFA6), Color(0xFF00A896)],
-                  ),
-                  borderRadius: BorderRadius.only(
-                    bottomLeft: Radius.circular(28),
-                    bottomRight: Radius.circular(28),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Builder(
-                      builder: (context) => IconButton(
-                        icon: const Icon(Icons.menu, color: Colors.white),
-                        onPressed: () => Scaffold.of(context).openDrawer(),
+              SlideTransition(
+                position: _slideAnim,
+                child: FadeTransition(
+                  opacity: _fadeAnim,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(20, 44, 20, 30),
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xFF00BFA6), Color(0xFF00A896)],
+                      ),
+                      borderRadius: BorderRadius.only(
+                        bottomLeft: Radius.circular(28),
+                        bottomRight: Radius.circular(28),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    const CircleAvatar(
-                      radius: 22,
-                      backgroundColor: Colors.white,
-                      child: Icon(Icons.person, color: Color(0xFF00BFA6)),
-                    ),
-                    const SizedBox(width: 12),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    child: Row(
                       children: [
-                        const Text(
-                          'Driver Dashboard',
-                          style: TextStyle(color: Colors.white, fontSize: 22),
+                        Builder(
+                          builder: (context) => IconButton(
+                            icon: const Icon(Icons.menu, color: Colors.white),
+                            onPressed: () => Scaffold.of(context).openDrawer(),
+                          ),
                         ),
-                        Text(
-                          tripStarted
-                              ? (isTempBusActive
-                              ? 'TEMP ${tripMode ?? ""} DUTY'
-                              : '${tripMode ?? ""} DUTY')
-                              : 'OFF DUTY',
-                          style: const TextStyle(color: Colors.white70),
+                        const SizedBox(width: 8),
+                        const CircleAvatar(
+                          radius: 22,
+                          backgroundColor: Colors.white,
+                          child: Icon(Icons.person, color: Color(0xFF00BFA6)),
+                        ),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Driver Dashboard',
+                              style: TextStyle(color: Colors.white, fontSize: 22),
+                            ),
+                            Text(
+                              tripStarted
+                                  ? (isTempBusActive
+                                  ? 'TEMP ${tripMode ?? ""} DUTY'
+                                  : '${tripMode ?? ""} DUTY')
+                                  : 'OFF DUTY',
+                              style: const TextStyle(color: Colors.white70),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
+                  ),
                 ),
               ),
 
               const SizedBox(height: 20),
 
-              _infoCard(
-                title: 'Bus Information',
+              FadeTransition(
+                  opacity: _fadeAnim,
+                  child: _infoCard(
+                    title: 'Bus Information',
                 children: [
                   _infoRow('Route', permRouteName),
                   _infoRow('Bus Number', permBusNumber),
                   _infoRow('Shift', shift),
                 ],
+               ),
               ),
-
               const SizedBox(height: 16),
 
               if (isTempBusActive)
@@ -652,72 +690,31 @@ class _DriverHomePageState extends State<DriverHomePage> {
                 ],
               ),
 
-              const SizedBox(height: 20),
+              FadeTransition(
+                opacity: _fadeAnim,
+                child: const SizedBox(height: 20),
+              ),
 
               Padding(
                 padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
                 child: tripStarted
-                    ? GestureDetector(
+                    ? _animatedActionButton(
+                  text: "End Trip",
+                  color: Colors.red,
                   onTap: _endTripFromBackend,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 18),
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: const Center(
-                      child: Text(
-                        'End Trip',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  ),
                 )
                     : Column(
                   children: [
-                    GestureDetector(
+                    _animatedActionButton(
+                      text: "Start Morning Trip",
+                      color: const Color(0xFF00BFA6),
                       onTap: () => _startTripWithMode("MORNING"),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 18),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF00BFA6),
-                          borderRadius: BorderRadius.circular(18),
-                        ),
-                        child: const Center(
-                          child: Text(
-                            'Start Morning Trip',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ),
                     ),
                     const SizedBox(height: 12),
-                    GestureDetector(
+                    _animatedActionButton(
+                      text: "Start Evening Trip",
+                      color: Colors.orange,
                       onTap: () => _startTripWithMode("EVENING"),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 18),
-                        decoration: BoxDecoration(
-                          color: Colors.orange,
-                          borderRadius: BorderRadius.circular(18),
-                        ),
-                        child: const Center(
-                          child: Text(
-                            'Start Evening Trip',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ),
                     ),
                   ],
                 ),
@@ -729,6 +726,52 @@ class _DriverHomePageState extends State<DriverHomePage> {
   }
 
   // ---------------- UI HELPERS ----------------
+  Widget _animatedActionButton({
+    required String text,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _buttonPressed = true),
+      onTapUp: (_) {
+        setState(() => _buttonPressed = false);
+        onTap();
+      },
+      onTapCancel: () => setState(() => _buttonPressed = false),
+      child: AnimatedScale(
+        scale: _buttonPressed ? 0.95 : 1,
+        duration: const Duration(milliseconds: 120),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          padding: const EdgeInsets.symmetric(vertical: 18),
+          decoration: BoxDecoration(
+            color: _buttonPressed
+                ? color.withOpacity(0.85)
+                : color,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.15),
+                blurRadius: 8,
+                offset: const Offset(0, 4),
+              )
+            ],
+          ),
+          child: Center(
+            child: Text(
+              text,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _infoCard({
     required String title,
     required List<Widget> children,
