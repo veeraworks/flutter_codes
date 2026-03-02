@@ -28,7 +28,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
   FirebaseDatabase.instance.ref();
 
   bool _followBus = true;
-
+  LatLng? _lastEtaLocation;
   LatLng? _cameraPosition;
   Timer? _cameraTimer;
 
@@ -242,30 +242,53 @@ class _DriverMapPageState extends State<DriverMapPage> {
 // ================= DRIVER ETA =================
   Future<void> _fetchDriverETA() async {
     if (busId == null) return;
-    if (_driverLocation == null || _routeStops.isEmpty) return;
+    if (_driverLocation == null) return;
+    if (_routeStops.isEmpty) return;
+    if (_lastEtaLocation != null &&
+        Geolocator.distanceBetween(
+          _lastEtaLocation!.latitude,
+          _lastEtaLocation!.longitude,
+          _driverLocation!.latitude,
+          _driverLocation!.longitude,
+        ) < 15) {
+      return;
+    }
 
+    _lastEtaLocation = _driverLocation;
     try {
-
+      // ✅ destination = last stop
       final lastStop = _routeStops.last;
 
-      final response = await ApiService.get(
-        "/drivers/eta"
-            "?originLat=${_driverLocation!.latitude}"
-            "&originLng=${_driverLocation!.longitude}"
-            "&destLat=${lastStop["lat"]}"
-            "&destLng=${lastStop["lng"]}"
-            "&busId=$busId"
-            "&nextStop=${_nextStopName ?? ""}",
+      // ✅ build SAFE query URL
+      final uri = Uri.parse("${ApiService.baseUrl}/drivers/eta").replace(
+        queryParameters: {
+          "busId": busId!,
+          "originLat": _driverLocation!.latitude.toString(),
+          "originLng": _driverLocation!.longitude.toString(),
+          "destLat": lastStop["lat"].toString(),
+          "destLng": lastStop["lng"].toString(),
+          "nextStop": _nextStopName ?? "",
+        },
       );
 
-      if (response.statusCode != 200) return;
+      // ✅ call API using ApiService
+      final response = await ApiService.get(
+        uri.toString().replaceFirst(ApiService.baseUrl, ""),
+      );
+
+      if (response.statusCode != 200) {
+        print("ETA API failed: ${response.statusCode}");
+        return;
+      }
 
       final data = jsonDecode(response.body);
 
+      // ✅ navigation steps
       _navSteps = data["steps"] ?? [];
       _updateNavigationInstruction();
       _prepareStepTarget();
 
+      // ✅ ETA update
       setState(() {
         final duration = data["durationValue"];
 
@@ -278,12 +301,11 @@ class _DriverMapPageState extends State<DriverMapPage> {
         _nextStopName = data["nextStop"];
       });
 
-      _fetchRouteStops();
-
     } catch (e) {
       print("Driver ETA error: $e");
     }
   }
+
 // ================= DISTANCE HELPER =================
 
   double _distanceMeters(LatLng a, LatLng b) {
