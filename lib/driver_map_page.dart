@@ -61,7 +61,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
     await _loadBusIcon();
     await _startDriverGPS();
-    await _listenRoutePolyline();
+    _listenRoutePolyline();
     await _fetchRouteStops();
     await _fetchDriverETA();
 
@@ -423,7 +423,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
   northeast: LatLng(maxLat, maxLng),
   );
 
-  _mapController!.animateCamera(
+  _mapController?.animateCamera(
   CameraUpdate.newLatLngBounds(bounds, 80),
   );
   }
