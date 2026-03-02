@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:project_spt/student_map_page.dart';
 import 'settings_page.dart';
 import 'student_map_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -10,6 +12,7 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'service/api_service.dart';
+
 class StudentHomePage extends StatefulWidget {
   const StudentHomePage({super.key});
 
@@ -51,18 +54,13 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
     //  Load student info into state
     await _loadStudentInfo();
-    await _subscribeToRoute();
+
 
     // Request notification permission
     await _requestPermission();
 
     // Attach listeners
-    FirebaseMessaging.onMessageOpenedApp.listen((message) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const NotificationsPage()),
-      );
-    });
+    _listenForMessages();
     _listenToNotifications();
     _listenToBusIssues();
     _listenToBus();
@@ -118,7 +116,16 @@ class _StudentHomePageState extends State<StudentHomePage> {
     );
 
     if (response.statusCode == 404) {
-      print("⚠️ Profile not found — skipping refresh");
+      print("❌ Student not found in backend");
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Session expired. Please login again."),
+        ),
+      );
+
       return;
     }
 
@@ -203,7 +210,6 @@ class _StudentHomePageState extends State<StudentHomePage> {
       );
     });
   }
-
 
   Future<void> _listenToNotifications() async {
     final prefs = await SharedPreferences.getInstance();
@@ -374,8 +380,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
     final prefs = await SharedPreferences.getInstance();
 
     String? originalBus = prefs.getString("busId");
-    final String? currentBus =
-    (tempBus ?? originalBus)?.toUpperCase();
+    String? currentBus = tempBus ?? originalBus;
 
     if (currentBus == null) return;
 
@@ -408,8 +413,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
     final prefs = await SharedPreferences.getInstance();
 
     final originalBus = prefs.getString("busId");
-    final currentBus =
-    (tempBus ?? originalBus)?.toUpperCase();
+    final currentBus = tempBus ?? originalBus;
 
     if (currentBus == null) return;
 
