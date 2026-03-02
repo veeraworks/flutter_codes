@@ -28,7 +28,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
   FirebaseDatabase.instance.ref();
 
   bool _followBus = true;
-
+  LatLng? _lastEtaLocation;
   LatLng? _cameraPosition;
   Timer? _cameraTimer;
 
@@ -240,22 +240,55 @@ class _DriverMapPageState extends State<DriverMapPage> {
   }
 
 // ================= DRIVER ETA =================
-
   Future<void> _fetchDriverETA() async {
     if (busId == null) return;
+    if (_driverLocation == null) return;
+    if (_routeStops.isEmpty) return;
+    if (_lastEtaLocation != null &&
+        Geolocator.distanceBetween(
+          _lastEtaLocation!.latitude,
+          _lastEtaLocation!.longitude,
+          _driverLocation!.latitude,
+          _driverLocation!.longitude,
+        ) < 15) {
+      return;
+    }
 
+    _lastEtaLocation = _driverLocation;
     try {
-      final response =
-      await ApiService.get("/drivers/eta/$busId");
+      // ✅ destination = last stop
+      final lastStop = _routeStops.last;
 
-      if (response.statusCode != 200) return;
+      // ✅ build SAFE query URL
+      final uri = Uri.parse("${ApiService.baseUrl}/drivers/eta").replace(
+        queryParameters: {
+          "busId": busId!,
+          "originLat": _driverLocation!.latitude.toString(),
+          "originLng": _driverLocation!.longitude.toString(),
+          "destLat": lastStop["lat"].toString(),
+          "destLng": lastStop["lng"].toString(),
+          "nextStop": _nextStopName ?? "",
+        },
+      );
+
+      // ✅ call API using ApiService
+      final response = await ApiService.get(
+        uri.toString().replaceFirst(ApiService.baseUrl, ""),
+      );
+
+      if (response.statusCode != 200) {
+        print("ETA API failed: ${response.statusCode}");
+        return;
+      }
 
       final data = jsonDecode(response.body);
 
+      // ✅ navigation steps
       _navSteps = data["steps"] ?? [];
       _updateNavigationInstruction();
       _prepareStepTarget();
 
+      // ✅ ETA update
       setState(() {
         final duration = data["durationValue"];
 
@@ -264,9 +297,10 @@ class _DriverMapPageState extends State<DriverMapPage> {
         } else {
           _etaMinutes = null;
         }
+
         _nextStopName = data["nextStop"];
       });
-      _fetchRouteStops();
+
     } catch (e) {
       print("Driver ETA error: $e");
     }
