@@ -96,7 +96,7 @@ class _MapPageState extends State<MapPage> {
 
     await _getStudentLocation();
     await _loadBusIcon();
-    await _listenRoutePolyline();
+    _listenRoutePolyline();
     await _fetchRouteStopsFromBackend();
     await _listenBusRealtime();
 
@@ -177,7 +177,7 @@ class _MapPageState extends State<MapPage> {
   northeast: LatLng(maxLat, maxLng),
   );
 
-  _mapController!.animateCamera(
+  _mapController?.animateCamera(
   CameraUpdate.newLatLngBounds(bounds, 80),
   );
   }
@@ -421,49 +421,54 @@ class _MapPageState extends State<MapPage> {
   }
   // ================= ROUTE POLYLINE LISTENER =================
   Future<void> _listenRoutePolyline() async {
-  if (busId == null) return;
+    if (busId == null) return;
 
-  _polylineListener?.cancel();
+    print("🔥 Listening encoded polyline for $busId");
 
-  _polylineListener = FirebaseDatabase.instance
-      .ref("routes/${busId!.toUpperCase()}/polyline")
-      .onValue
-      .listen((event) {
+    _polylineListener?.cancel();
 
-  final data = event.snapshot.value;
-  if (data == null) return;
+    _polylineListener = FirebaseDatabase.instance
+        .ref("busRoutes/$busId/fullRoadPolyline")
+        .onValue
+        .listen((event) {
 
-  final map = Map<String, dynamic>.from(data as Map);
+      final data = event.snapshot.value;
 
-  List<LatLng> points = [];
+      if (data == null) {
+        print("❌ No polyline data");
+        return;
+      }
 
-  final sortedKeys = map.keys.toList()
-  ..sort((a,b)=>int.parse(a).compareTo(int.parse(b)));
+      // ✅ Firebase gives STRING
+      String encodedPolyline = data.toString();
 
-  for (final key in sortedKeys) {
-  final p = Map<String, dynamic>.from(map[key]);
+      print("✅ Polyline string received");
 
-  points.add(
-  LatLng(
-  (p["lat"] as num).toDouble(),
-  (p["lng"] as num).toDouble(),
-  ),
-  );
+      PolylinePoints polylinePoints = PolylinePoints();
+
+      List<PointLatLng> decoded =
+      polylinePoints.decodePolyline(encodedPolyline);
+
+      List<LatLng> points = decoded
+          .map((p) => LatLng(p.latitude, p.longitude))
+          .toList();
+
+      print("✅ Decoded points = ${points.length}");
+
+      setState(() {
+        _polylines = {
+          Polyline(
+            polylineId: const PolylineId("route"),
+            points: points,
+            width: 6,
+            color: Colors.blue,
+          ),
+        };
+      });
+
+      _fitRouteToScreen(points);
+    });
   }
-
-  setState(() {
-  _polylines = {
-  Polyline(
-  polylineId: const PolylineId("route"),
-  points: points,
-  width: 6,
-  color: Colors.blue,
-  )
-  };
-  });
-  });
-  }
-
 // ================= ROAD FOLLOW ANIMATION =================
   void _animateBusAlongRoad(double bearing) {
   if (_busSpeedMps < 0.5) return;
