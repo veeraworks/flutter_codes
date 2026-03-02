@@ -240,13 +240,23 @@ class _DriverMapPageState extends State<DriverMapPage> {
   }
 
 // ================= DRIVER ETA =================
-
   Future<void> _fetchDriverETA() async {
     if (busId == null) return;
+    if (_driverLocation == null || _routeStops.isEmpty) return;
 
     try {
-      final response =
-      await ApiService.get("/drivers/eta/$busId");
+
+      final lastStop = _routeStops.last;
+
+      final response = await ApiService.get(
+        "/drivers/eta"
+            "?originLat=${_driverLocation!.latitude}"
+            "&originLng=${_driverLocation!.longitude}"
+            "&destLat=${lastStop["lat"]}"
+            "&destLng=${lastStop["lng"]}"
+            "&busId=$busId"
+            "&nextStop=${_nextStopName ?? ""}",
+      );
 
       if (response.statusCode != 200) return;
 
@@ -264,14 +274,16 @@ class _DriverMapPageState extends State<DriverMapPage> {
         } else {
           _etaMinutes = null;
         }
+
         _nextStopName = data["nextStop"];
       });
+
       _fetchRouteStops();
+
     } catch (e) {
       print("Driver ETA error: $e");
     }
   }
-
 // ================= DISTANCE HELPER =================
 
   double _distanceMeters(LatLng a, LatLng b) {
