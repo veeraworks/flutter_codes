@@ -329,6 +329,8 @@ class _MapPageState extends State<MapPage> {
 
         if (isStudentStop) {
           _studentStopLocation = pos;
+          print("✅ STUDENT STOP MATCHED: $currentStopName");
+          print("📍 Student Stop Location: $_studentStopLocation");
         }
       }
 
@@ -370,7 +372,7 @@ class _MapPageState extends State<MapPage> {
         (map["lng"] as num).toDouble(),
 
       );
-
+      print("🔥 BUS REALTIME EVENT TRIGGERED");
       // ✅ mark GPS arrival
       _gpsJustUpdated = true;
 
