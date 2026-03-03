@@ -23,6 +23,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
   LatLng? _driverLocation;
   double _driverBearing = 0;
+  double _currentSpeed = 0;
 
   final DatabaseReference _busRef =
   FirebaseDatabase.instance.ref();
@@ -79,7 +80,9 @@ class _DriverMapPageState extends State<DriverMapPage> {
     await _startDriverGPS();
     _listenRoutePolyline();
     await _fetchRouteStops();
-    await _fetchDriverETA();
+
+    // ❌ REMOVE THIS LINE
+    // await _fetchDriverETA();
 
     _etaTimer = Timer.periodic(
       const Duration(seconds: 20),
@@ -159,6 +162,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
           ),
         ).listen((Position position) {
           if (!mounted) return;
+          _currentSpeed = position.speed;
 
           final rawPoint = LatLng(
             position.latitude,
@@ -166,7 +170,10 @@ class _DriverMapPageState extends State<DriverMapPage> {
           );
 
           _driverLocation = _snapToRoute(rawPoint);
-          _driverBearing = position.heading;
+          _driverBearing =
+          position.heading.isNaN || position.heading < 0
+              ? _driverBearing
+              : position.heading;
 
           _startNavigationCamera(_driverLocation!);
 
@@ -174,6 +181,10 @@ class _DriverMapPageState extends State<DriverMapPage> {
           _publishDriverLocation();
           _updateStepDistance();
           _checkStopArrival();
+
+          if (_etaMinutes == null) {
+            _fetchDriverETA();
+          }
         });
   }
 
@@ -241,9 +252,35 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
 // ================= DRIVER ETA =================
   Future<void> _fetchDriverETA() async {
+    print("==== DRIVER ETA START ====");
+    print("busId = $busId");
+    print("driverLocation = $_driverLocation");
+    print("routeStops length = ${_routeStops.length}");
+
     if (busId == null) return;
     if (_driverLocation == null) return;
-    if (_routeStops.isEmpty) return;
+    if (_driverLocation!.latitude == 0 ||
+        _driverLocation!.longitude == 0) {
+      print("❌ ETA skipped — invalid GPS (0,0)");
+      return;
+    }
+    if (_routeStops.isEmpty) {
+      print("❌ ETA skipped — routeStops empty");
+      return;
+    }
+
+    final lastStop = _routeStops.last;
+
+    final destLat = lastStop["lat"];
+    final destLng = lastStop["lng"];
+
+    if (destLat == null || destLng == null) {
+      print("❌ ETA skipped — invalid stop coordinates");
+      print("LastStop = $lastStop");
+      return;
+    }
+
+    // Avoid frequent calls if bus hasn't moved much
     if (_lastEtaLocation != null &&
         Geolocator.distanceBetween(
           _lastEtaLocation!.latitude,
@@ -255,40 +292,32 @@ class _DriverMapPageState extends State<DriverMapPage> {
     }
 
     _lastEtaLocation = _driverLocation;
+
     try {
-      // ✅ destination = last stop
-      final lastStop = _routeStops.last;
+      print("📡 Calling ETA API safely...");
 
-      // ✅ build SAFE query URL
-      final uri = Uri.parse("${ApiService.baseUrl}/drivers/eta").replace(
-        queryParameters: {
-          "busId": busId!,
-          "originLat": _driverLocation!.latitude.toString(),
-          "originLng": _driverLocation!.longitude.toString(),
-          "destLat": lastStop["lat"].toString(),
-          "destLng": lastStop["lng"].toString(),
-          "nextStop": _nextStopName ?? "",
-        },
+      final data = await ApiService.getDriverEta(
+        busId: busId!,
+        originLat: _driverLocation!.latitude,
+        originLng: _driverLocation!.longitude,
+        destLat: (destLat as num).toDouble(),
+        destLng: (destLng as num).toDouble(),
+        nextStop: _nextStopName ?? "",
       );
 
-      // ✅ call API using ApiService
-      final response = await ApiService.get(
-        uri.toString().replaceFirst(ApiService.baseUrl, ""),
-      );
-
-      if (response.statusCode != 200) {
-        print("ETA API failed: ${response.statusCode}");
+      if (data == null) {
+        print("❌ ETA API returned null");
         return;
       }
 
-      final data = jsonDecode(response.body);
+      print("✅ ETA Response received");
 
-      // ✅ navigation steps
+      // ================= TURN BY TURN =================
       _navSteps = data["steps"] ?? [];
       _updateNavigationInstruction();
       _prepareStepTarget();
 
-      // ✅ ETA update
+      // ================= ETA UPDATE =================
       setState(() {
         final duration = data["durationValue"];
 
@@ -302,10 +331,9 @@ class _DriverMapPageState extends State<DriverMapPage> {
       });
 
     } catch (e) {
-      print("Driver ETA error: $e");
+      print("❌ Driver ETA error: $e");
     }
   }
-
 // ================= DISTANCE HELPER =================
 
   double _distanceMeters(LatLng a, LatLng b) {
@@ -507,9 +535,8 @@ class _DriverMapPageState extends State<DriverMapPage> {
         "lat": _driverLocation!.latitude,
         "lng": _driverLocation!.longitude,
         "bearing": _driverBearing,
-        "timestamp": DateTime
-            .now()
-            .millisecondsSinceEpoch,
+        "speed": _currentSpeed, // ⭐ ADD THIS
+        "timestamp": DateTime.now().millisecondsSinceEpoch,
       });
     } catch (e) {
       print("Firebase publish error: $e");
@@ -617,8 +644,8 @@ class _DriverMapPageState extends State<DriverMapPage> {
             color: Colors.blue,
           ),
         };
-
-        // 🔥 SAVE FULL ROAD POINTS FOR SNAPPING
+        print("Polyline data = $data");
+        print("Decoded count = ${decoded.length}");
         _routePoints = points;
       });
     });

@@ -24,8 +24,8 @@ Future<void> initializeService() async {
   );
 }
 
-void onStart(ServiceInstance service) {
-
+@pragma('vm:entry-point')
+Future<void> onStart(ServiceInstance service) async {
   if (service is AndroidServiceInstance) {
     service.setForegroundNotificationInfo(
       title: "Smart Bus Tracking",

@@ -1,17 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:project_spt/student_map_page.dart';
 import 'settings_page.dart';
-import 'student_map_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'main.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'service/api_service.dart';
+import 'package:geolocator/geolocator.dart';
 
 class StudentHomePage extends StatefulWidget {
   const StudentHomePage({super.key});
@@ -38,17 +37,16 @@ class _StudentHomePageState extends State<StudentHomePage>
 
   int _currentIndex = 0;
   double? _etaMinutes;
+  bool _locationPermissionGranted = false;
   int unreadCount = 0;
   StreamSubscription? _notificationListener;
-  DateTime? _lastEtaFetch;
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
   late Animation<Offset> _slideAnim;
-  String? _prevTempRoute; // track previous temp route to avoid duplicate snackbars
   @override
   void initState() {
     super.initState();
-
+    _initLocationPermission();  // 👈 ADD THIS
     _animController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 700),
@@ -73,6 +71,7 @@ class _StudentHomePageState extends State<StudentHomePage>
     _loadActiveIssue();
     _initializeStudent();
   }
+
   Future<void> _initializeStudent() async {
 
     // Load fresh profile from backend
@@ -90,14 +89,23 @@ class _StudentHomePageState extends State<StudentHomePage>
     _listenToNotifications();
     _listenToBusIssues();
     _listenToBus();
-    _fetchETA();
     _listenToTemporaryBus();
-    _etaTimer = Timer.periodic(
-      const Duration(seconds: 20),
-          (_) => _fetchETA(),
-    );
 
     // Start GPS tracking
+  }
+  Future<void> _initLocationPermission() async {
+    try {
+      final permission = await Geolocator.requestPermission();
+
+      if (permission == LocationPermission.always ||
+          permission == LocationPermission.whileInUse) {
+        setState(() {
+          _locationPermissionGranted = true;
+        });
+      }
+    } catch (e) {
+      print("Location permission error: $e");
+    }
   }
 
   Future<void> _loadActiveIssue() async {
@@ -120,41 +128,7 @@ class _StudentHomePageState extends State<StudentHomePage>
       });
     }
   }
-  Future<void> _fetchETA() async {
-    if (busId == null) return;
 
-    // ✅ THROTTLE (prevent too many API calls)
-    final now = DateTime.now();
-
-    if (_lastEtaFetch != null &&
-        now.difference(_lastEtaFetch!) <
-            const Duration(seconds: 5)) {
-      return;
-    }
-
-    _lastEtaFetch = now;
-
-    try {
-      final response =
-      await ApiService.get("/drivers/eta/$busId");
-
-      if (response.statusCode != 200) return;
-
-      final data = jsonDecode(response.body);
-
-      setState(() {
-        final duration = data["durationValue"];
-
-        if (duration != null && duration is num) {
-          _etaMinutes = duration.toDouble() / 60.0;
-        } else {
-          _etaMinutes = null;
-        }
-      });
-    } catch (e) {
-      print("ETA fetch error: $e");
-    }
-  }
   @override
   void dispose() {
     _issueListener?.cancel();
@@ -218,6 +192,7 @@ class _StudentHomePageState extends State<StudentHomePage>
     await prefs.setString("busId", newBusId ?? "");
     await prefs.setString("routeName", data["busName"] ?? "");
     await prefs.setString("studentName", data["name"] ?? "");
+    await prefs.setString("stopName", data["boardingPoint"] ?? "");
 
     setState(() {
       studentName = data["name"];
@@ -225,26 +200,7 @@ class _StudentHomePageState extends State<StudentHomePage>
       displayRoute = data["busName"];
       busId = newBusId;
     });
-  }
-
-  Future<void> _subscribeToRoute() async {
-    final prefs = await SharedPreferences.getInstance();
-    final busId = prefs.getString("busId");
-
-    if (busId != null && busId.isNotEmpty) {
-
-      print("🔥 Subscribing NOW to topic: ${busId.toLowerCase()}");
-
-      await FirebaseMessaging.instance
-          .subscribeToTopic(busId.toLowerCase());
-
-      print("✅ Subscribed successfully!");
-    } else {
-      print("❌ busId is NULL or empty!");
-    }
-
-    String? token = await FirebaseMessaging.instance.getToken();
-    print("🔥 FCM TOKEN AFTER PROFILE LOAD: $token");
+    print("🔥 FULL STUDENT PROFILE RESPONSE = $data");
   }
 
   Future<void> _requestPermission() async {
@@ -470,9 +426,7 @@ class _StudentHomePageState extends State<StudentHomePage>
         return;
       }
 
-      // ✅ BUS MOVED → REFRESH ETA
-      _fetchETA();
-    });
+      });
   }
 
 
@@ -855,7 +809,7 @@ class _StudentHomePageState extends State<StudentHomePage>
                                     topLeft: Radius.circular(16),
                                     topRight: Radius.circular(16),
                                   ),
-                                  child: const SizedBox(
+                                  child: SizedBox(
                                     height: 170,
                                     child: GoogleMap(
                                       initialCameraPosition: CameraPosition(
@@ -863,8 +817,8 @@ class _StudentHomePageState extends State<StudentHomePage>
                                         zoom: 13,
                                       ),
                                       zoomControlsEnabled: false,
-                                      myLocationEnabled: true,
-                                      myLocationButtonEnabled: false,
+                                      myLocationEnabled: _locationPermissionGranted,
+                                      myLocationButtonEnabled: _locationPermissionGranted,
                                     ),
                                   ),
                                 ),
