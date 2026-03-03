@@ -401,13 +401,7 @@ class _MapPageState extends State<MapPage> {
       final snappedPos = _snapToRoute(newPos);
 
       _busLocation = snappedPos;
-      if (_etaTimer == null) {
-        _etaTimer = Timer.periodic(
-          const Duration(seconds: 20),
-              (_) => _fetchETAFromBackend(),
-        );
-      }
-      _fetchETAFromBackend();
+
       _startPredictiveMotion(snappedPos, bearing);
 
       if (_roadPath.isNotEmpty) {

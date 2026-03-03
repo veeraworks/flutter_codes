@@ -6,7 +6,6 @@ import 'package:geolocator/geolocator.dart';
 import 'service/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'driver_full_map_page.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'dart:math';
 
@@ -50,15 +49,12 @@ class _DriverMapPageState extends State<DriverMapPage> {
   Marker? _busMarker;
   Set<Polyline> _polylines = {};
   StreamSubscription<DatabaseEvent>? _polylineListener;
-
+  StreamSubscription<DatabaseEvent>? _busLocationListener;
   List<Map<String, dynamic>> _routeStops = [];
   List<LatLng> _routePoints = [];
   bool _arrivalTriggered = false;
 
   bool _routeFitted = false;
-
-  StreamSubscription<Position>? _gpsSubscription;
-
   String? busId;
 
   // ================= INIT =================
@@ -69,7 +65,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
     _initDriverMap();
   }
 
-  Future<void>  _initDriverMap() async {
+  Future<void> _initDriverMap() async {
     await _loadPrefs();
 
     if (busId == null) {
@@ -77,22 +73,18 @@ class _DriverMapPageState extends State<DriverMapPage> {
       return;
     }
 
+    _listenToBusLocation();
     await _loadBusIcon();
     _driverLocation = const LatLng(12.9516, 80.1462);
     _updateDriverMarker();
-    await _startDriverGPS();
-    _listenRoutePolyline();
-    await _fetchRouteStops();
 
-    // ❌ REMOVE THIS LINE
-    // await _fetchDriverETA();
+    await _listenRoutePolyline();
 
     _etaTimer = Timer.periodic(
       const Duration(seconds: 20),
           (_) => _fetchDriverETA(),
     );
   }
-
   void _updateNavigationInstruction() {
     if (_navSteps.isEmpty) return;
 
@@ -134,10 +126,43 @@ class _DriverMapPageState extends State<DriverMapPage> {
       _navIcon = icon;
     });
   }
+  void _listenToBusLocation() {
+    if (busId == null) return;
 
+    _busLocationListener = FirebaseDatabase.instance
+        .ref("buses/$busId/current")
+        .onValue
+        .listen((event) {
+
+      final data = event.snapshot.value as Map?;
+      if (data == null) return;
+
+      final lat = data["lat"];
+      final lng = data["lng"];
+      final bearing = data["bearing"];
+      final speed = data["speed"];
+
+      if (lat == null || lng == null) return;
+
+      setState(() {
+        _driverLocation = LatLng(
+          (lat as num).toDouble(),
+          (lng as num).toDouble(),
+        );
+
+        _driverBearing = (bearing ?? 0).toDouble();
+        _currentSpeed = (speed ?? 0).toDouble();
+
+        _updateDriverMarker();
+      });
+      if (_followBus && _driverLocation != null) {
+        _startNavigationCamera(_driverLocation!);
+      }
+    });
+  }
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    busId = prefs.getString("busId");
+    busId = prefs.getString("busId")?.toUpperCase();
 
     print("BUS ID = $busId");
   }
@@ -148,57 +173,6 @@ class _DriverMapPageState extends State<DriverMapPage> {
       "assets/images/bus_icon_map.png",
     );
   }
-
-  // ================= GPS LISTENER =================
-  Future<void> _startDriverGPS() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      print("❌ Location service disabled");
-      return;
-    }
-
-    LocationPermission permission = await Geolocator.checkPermission();
-
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      print("❌ Location permission denied");
-      return;
-    }
-
-    print("✅ GPS permission granted");
-
-    _gpsSubscription = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 3,
-      ),
-    ).listen((Position position) {
-
-      if (!mounted) return;
-
-      final rawPoint = LatLng(position.latitude, position.longitude);
-
-      _driverLocation = _snapToRoute(rawPoint);
-      if (_driverLocation != null) {
-        print("GPS UPDATE: ${_driverLocation!.latitude}, ${_driverLocation!.longitude}");
-      }
-      _driverBearing =
-      position.heading.isNaN || position.heading < 0
-          ? _driverBearing
-          : position.heading;
-
-      if (_driverLocation != null) {
-        _startNavigationCamera(_driverLocation!);
-      }
-      _updateDriverMarker();
-      _publishDriverLocation();
-    });
-  }
-
   void _startNavigationCamera(LatLng busPos) {
     if (!_followBus || _mapController == null) return;
 
@@ -513,42 +487,18 @@ class _DriverMapPageState extends State<DriverMapPage> {
   }
 
 // ================= DRIVER MARKER =================
-
   void _updateDriverMarker() {
     if (_driverLocation == null) return;
 
-    setState(() {
-      _busMarker = Marker(
-        markerId: const MarkerId("bus"),
-        position: _driverLocation!,
-        icon: _busIcon ?? BitmapDescriptor.defaultMarker,
-        rotation: _driverBearing,
-        anchor: const Offset(0.5, 0.5),
-        flat: true,
-      );
-      print("🚍 BUS MARKER UPDATED: $_driverLocation");
-    });
+    _busMarker = Marker(
+      markerId: const MarkerId("bus"),
+      position: _driverLocation!,
+      icon: _busIcon ?? BitmapDescriptor.defaultMarker,
+      rotation: _driverBearing,
+      anchor: const Offset(0.5, 0.5),
+      flat: true,
+    );
   }
-// ================= FIREBASE PUBLISH =================
-
-  Future<void> _publishDriverLocation() async {
-    if (busId == null || _driverLocation == null) return;
-
-    try {
-      await _busRef
-          .child("buses/$busId/current")
-          .update({
-        "lat": _driverLocation!.latitude,
-        "lng": _driverLocation!.longitude,
-        "bearing": _driverBearing,
-        "speed": _currentSpeed, // ⭐ ADD THIS
-        "timestamp": DateTime.now().millisecondsSinceEpoch,
-      });
-    } catch (e) {
-      print("Firebase publish error: $e");
-    }
-  }
-
 // ================= ROUTE STOPS =================
   Future<void> _fetchRouteStops() async {
     if (busId == null) return;
@@ -590,6 +540,9 @@ class _DriverMapPageState extends State<DriverMapPage> {
           ),
         );
       }
+
+      print("Stops API raw response: ${response.body}");
+      print("Stops status code: ${response.statusCode}");
 
       setState(() {
         _stopMarkers = stopMarkers;   // ✅ ONLY STOP MARKERS
@@ -676,9 +629,9 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
   @override
   void dispose() {
-    _gpsSubscription?.cancel();
     _polylineListener?.cancel();
     _etaTimer?.cancel();
+    _busLocationListener?.cancel();
     _cameraTimer?.cancel();
     _mapController?.dispose();
     super.dispose();
@@ -784,44 +737,16 @@ class _DriverMapPageState extends State<DriverMapPage> {
             ),
             onMapCreated: (controller) async {
               _mapController = controller;
-
-              // 🔥 LOAD STOPS AFTER MAP READY
-              await _fetchRouteStops();
+              await _fetchRouteStops();   // ✅ ONLY HERE
+              _fetchDriverETA();  // ✅ trigger first ETA after stops loaded
             },
             myLocationEnabled: false,
             myLocationButtonEnabled: false,
             markers: {
               if (_busMarker != null) _busMarker!,
               ..._stopMarkers,
-            },            polylines: _polylines,
-          ),
-
-          Positioned(
-            top: 20,
-            right: 20,
-            child: FloatingActionButton(
-              heroTag: "fullMap",
-              backgroundColor: Colors.black87,
-              child: const Icon(Icons.fullscreen),
-              onPressed: () {
-                if (_driverLocation == null) return;
-
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => DriverFullMapPage(
-                      currentLatLng: _driverLocation!,
-                      marker: _busMarker ??
-                          Marker(
-                            markerId: const MarkerId("bus"),
-                            position: _driverLocation!,
-                          ),
-                      routePoints: _routePoints,
-                    ),
-                  ),
-                );
-              },
-            ),
+            },
+            polylines: _polylines,
           ),
 
           // 🚍 DRIVER NEXT STOP PANEL
