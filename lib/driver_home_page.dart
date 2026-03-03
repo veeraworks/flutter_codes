@@ -7,13 +7,11 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'service/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
-
-import 'driver_full_map_page.dart';
 import 'temporary_bus_change_page.dart';
 import 'driver_profile_page.dart';
 import 'driver_settings_page.dart';
 import 'issue_reporting_page.dart';
+import 'driver_map_page.dart';
 
 class DriverHomePage extends StatefulWidget {
   const DriverHomePage({super.key});
@@ -54,13 +52,6 @@ class _DriverHomePageState extends State<DriverHomePage>
   late Animation<double> _fadeAnim;
   late Animation<Offset> _slideAnim;
   bool _buttonPressed = false;
-  // 🗺️ MAP STATE
-  GoogleMapController? _mapController;
-  Marker? _driverMarker;
-  LatLng _currentLatLng = const LatLng(13.0827, 80.2707); // default
-
-  // 🧵 ROUTE POLYLINE STATE
-  final List<LatLng> _routePoints = [];
 
   @override
   void initState() {
@@ -291,62 +282,19 @@ class _DriverHomePageState extends State<DriverHomePage>
       ),
     ).listen((position) {
 
-      print("GPS UPDATE → ${position.latitude}, ${position.longitude}");
-      print("RAW SPEED → ${position.speed} m/s");
-
-      if (!tripStarted) {
-        print("GPS running but trip not started");
-        return;
-      }
-
-      final latLng = LatLng(position.latitude, position.longitude);
+      if (!tripStarted) return;
 
       // ================= SPEED STABILIZATION =================
       double realSpeed = position.speed;
 
-      // Remove tiny GPS noise
       if (realSpeed < 0.5) {
         realSpeed = 0;
       }
 
-      // Apply exponential smoothing (70% previous + 30% new)
       realSpeed = (_lastSpeed * 0.7) + (realSpeed * 0.3);
-
-      // Round to 1 decimal place
       realSpeed = double.parse(realSpeed.toStringAsFixed(1));
 
       _lastSpeed = realSpeed;
-
-      print("SMOOTHED SPEED → $realSpeed m/s");
-
-      // ================= UI UPDATE =================
-      setState(() {
-        _currentLatLng = latLng;
-
-        _driverMarker = Marker(
-          markerId: const MarkerId("driver"),
-          position: latLng,
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueGreen,
-          ),
-        );
-
-        if (_routePoints.isEmpty ||
-            Geolocator.distanceBetween(
-              _routePoints.last.latitude,
-              _routePoints.last.longitude,
-              latLng.latitude,
-              latLng.longitude,
-            ) > 5) {
-
-          _routePoints.add(latLng);
-        }
-
-      });
-
-      _mapController?.animateCamera(
-        CameraUpdate.newLatLng(latLng),
-      );
 
       // ================= FIREBASE UPDATE =================
       if (busId != null && internetOn) {
@@ -354,10 +302,8 @@ class _DriverHomePageState extends State<DriverHomePage>
           "lat": position.latitude,
           "lng": position.longitude,
           "bearing": position.heading,
-          "speed": realSpeed, // 🔥 stable speed
+          "speed": realSpeed,
           "updatedAt": ServerValue.timestamp,
-        }).catchError((e) {
-          print("Failed to update bus location: $e");
         });
       }
     });
@@ -546,11 +492,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => DriverFullMapPage(
-                        currentLatLng: _currentLatLng,
-                        marker: _driverMarker,
-                        routePoints: List.from(_routePoints),
-                      ),
+                      builder: (_) => const DriverMapPage(),
                     ),
                   );
                 },
@@ -657,15 +599,15 @@ class _DriverHomePageState extends State<DriverHomePage>
               const SizedBox(height: 20),
 
               FadeTransition(
-                  opacity: _fadeAnim,
-                  child: _infoCard(
-                    title: 'Bus Information',
-                children: [
-                  _infoRow('Route', permRouteName),
-                  _infoRow('Bus Number', permBusNumber),
-                  _infoRow('Shift', shift),
-                ],
-               ),
+                opacity: _fadeAnim,
+                child: _infoCard(
+                  title: 'Bus Information',
+                  children: [
+                    _infoRow('Route', permRouteName),
+                    _infoRow('Bus Number', permBusNumber),
+                    _infoRow('Shift', shift),
+                  ],
+                ),
               ),
               const SizedBox(height: 16),
 
