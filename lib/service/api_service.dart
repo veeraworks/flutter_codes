@@ -9,9 +9,9 @@ class ApiService {
   static Map<String, String> get headers => {
     "Content-Type": "application/json",
     "x-api-key": "smartbus_2026_secure",
+    "ngrok-skip-browser-warning": "true",
   };
 
-  // ✅ POST Helper
   static Future<http.Response> post(
       String endpoint, Map<String, dynamic> body) {
     return http.post(
@@ -32,34 +32,40 @@ class ApiService {
   // ============================================================
   // ✅ DRIVER ETA API (NEW)
   // ============================================================
-
   static Future<Map<String, dynamic>?> getDriverEta({
     required String busId,
     required double originLat,
     required double originLng,
     required double destLat,
     required double destLng,
-    String nextStop = "",
+    required String nextStop,
   }) async {
-    final url =
-        "$baseUrl/drivers/eta"
-        "?busId=$busId"
-        "&originLat=$originLat"
-        "&originLng=$originLng"
-        "&destLat=$destLat"
-        "&destLng=$destLng"
-        "&nextStop=$nextStop";
+
+    final uri = Uri.parse("$baseUrl/drivers/eta").replace(
+      queryParameters: {
+        "originLat": originLat.toString(),
+        "originLng": originLng.toString(),
+        "destLat": destLat.toString(),
+        "destLng": destLng.toString(),
+        "busId": busId,
+        "nextStop": nextStop,
+      },
+    );
+
+    print("📡 ETA URL: $uri");
 
     final response = await http.get(
-      Uri.parse(url),
+      uri,
       headers: headers,
     );
 
-    if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+    print("📡 ETA Status: ${response.statusCode}");
+
+    if (response.statusCode != 200) {
+      print("❌ ETA Failed: ${response.body}");
+      return null;
     }
 
-    print("❌ ETA API failed: ${response.statusCode}");
-    return null;
+    return jsonDecode(response.body);
   }
 }

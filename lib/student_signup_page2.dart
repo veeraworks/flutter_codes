@@ -26,6 +26,7 @@ class StudentSignupStep2 extends StatefulWidget {
 
 class _StudentSignupStep2State extends State<StudentSignupStep2> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
+
   bool isLoading = false;
 
   // ================= SEND OTP =================
@@ -35,25 +36,29 @@ class _StudentSignupStep2State extends State<StudentSignupStep2> {
     await _auth.verifyPhoneNumber(
       phoneNumber: "+91${widget.phoneNumber}",
 
-      verificationCompleted: (credential) async {
+      /// AUTO VERIFY (Some devices)
+      verificationCompleted: (PhoneAuthCredential credential) async {
         await _auth.signInWithCredential(credential);
       },
 
-      verificationFailed: (e) {
+      /// ERROR
+      verificationFailed: (FirebaseAuthException e) {
         setState(() => isLoading = false);
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.message ?? "OTP Failed")),
         );
       },
 
-      codeSent: (vid, token) {
+      /// OTP SENT ✅ → OPEN OTP PAGE
+      codeSent: (String verificationId, int? resendToken) {
         setState(() => isLoading = false);
 
         Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => StudentOtpPage(
-              verificationId: vid,
+              verificationId: verificationId,
               regNo: widget.regNo,
               phoneNumber: widget.phoneNumber,
               isSignup: true,
@@ -62,7 +67,7 @@ class _StudentSignupStep2State extends State<StudentSignupStep2> {
         );
       },
 
-      codeAutoRetrievalTimeout: (vid) {},
+      codeAutoRetrievalTimeout: (String verificationId) {},
     );
   }
 
@@ -82,7 +87,7 @@ class _StudentSignupStep2State extends State<StudentSignupStep2> {
       body: Stack(
         children: [
 
-          /// ✅ FULL WIDTH HEADER IMAGE (TOP)
+          /// HEADER IMAGE
           Positioned(
             top: 0,
             left: 0,
@@ -90,19 +95,17 @@ class _StudentSignupStep2State extends State<StudentSignupStep2> {
             child: Image.asset(
               "assets/images/student2.jpg",
               height: 240,
-              width: double.infinity,
               fit: BoxFit.cover,
             ),
           ),
 
-          /// ✅ PAGE CONTENT
+          /// CONTENT
           Center(
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Column(
                 children: [
 
-                  /// Push card below image
                   const SizedBox(height: 180),
 
                   /// CARD
@@ -150,7 +153,7 @@ class _StudentSignupStep2State extends State<StudentSignupStep2> {
 
                         const SizedBox(height: 24),
 
-                        /// DETAILS
+                        /// STUDENT DETAILS
                         _infoTile(Icons.person, "Name", widget.name),
                         _infoTile(Icons.school, "Department", widget.department),
                         _infoTile(Icons.directions_bus, "Bus", widget.busId),
@@ -167,6 +170,7 @@ class _StudentSignupStep2State extends State<StudentSignupStep2> {
                             onPressed: isLoading ? null : sendOtp,
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.teal,
+                              foregroundColor: Colors.white,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(14),
                               ),

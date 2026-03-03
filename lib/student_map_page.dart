@@ -84,8 +84,7 @@ class _MapPageState extends State<MapPage> {
     // ✅ subscribe notifications
     if (busId != null) {
       await FirebaseMessaging.instance
-          .subscribeToTopic("route_$busId");
-
+          .subscribeToTopic(busId!.toLowerCase());
       print("✅ Subscribed to route_$busId");
     }
 
@@ -129,7 +128,10 @@ class _MapPageState extends State<MapPage> {
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     busId = prefs.getString("busId");
-    stopName = prefs.getString("stopName");
+    stopName = prefs.getString("boardingPoint");
+
+    print("Loaded busId: $busId");
+    print("Loaded stopName: $stopName");
   }
 
   Future<void> _getStudentLocation() async {
@@ -285,9 +287,17 @@ class _MapPageState extends State<MapPage> {
         int currentOrder = stop["stopOrder"];
 
         bool isStudentStop =
-            currentStopName ==
-                stopName?.trim();
+            currentStopName
+                .toLowerCase()
+                .replaceAll(" ", "")
+                .trim() ==
+                stopName
+                    ?.toLowerCase()
+                    .replaceAll(" ", "")
+                    .trim();
 
+        print("Route Stop: $currentStopName");
+        print("Student Stop: $stopName");
         double markerHue = BitmapDescriptor.hueOrange;
 
         // 🟢 NEXT STOP
@@ -389,6 +399,12 @@ class _MapPageState extends State<MapPage> {
       final snappedPos = _snapToRoute(newPos);
 
       _busLocation = snappedPos;
+      if (_etaTimer == null) {
+        _etaTimer = Timer.periodic(
+          const Duration(seconds: 20),
+              (_) => _fetchETAFromBackend(),
+        );
+      }
       _fetchETAFromBackend();
       _startPredictiveMotion(snappedPos, bearing);
 
@@ -675,6 +691,21 @@ class _MapPageState extends State<MapPage> {
 
 // ================= BACKEND SMART ETA =================
   Future<void> _fetchETAFromBackend() async {
+    print("==== CALLING ETA ====");
+    print("busId: $busId");
+    print("busLocation: $_busLocation");
+    print("studentStopLocation: $_studentStopLocation");
+
+    if (_busLocation != null) {
+      print("originLat: ${_busLocation!.latitude}");
+      print("originLng: ${_busLocation!.longitude}");
+    }
+
+    if (_studentStopLocation != null) {
+      print("destLat: ${_studentStopLocation!.latitude}");
+      print("destLng: ${_studentStopLocation!.longitude}");
+    }
+
     if (busId == null ||
         _busLocation == null ||
         _studentStopLocation == null) {
