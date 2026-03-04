@@ -89,41 +89,48 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _initialize() async {
     final prefs = await SharedPreferences.getInstance();
 
+    // Load stored bus info
     await _loadBusId();
     await _refreshDriverProfile();
     await _loadBusInfo();
     await _listenToTemporaryBus();
 
-    final wasTracking = prefs.getBool("trackingActive") ?? false;
-    final savedTripId = prefs.getString("activeTripId");
+    final bool wasTracking = prefs.getBool("trackingActive") ?? false;
+    final String? savedTripId = prefs.getString("activeTripId");
+    final String? savedTripMode = prefs.getString("tripMode");
 
     if (wasTracking && savedTripId != null) {
-      setState(() {
-        tripStarted = true;
-        currentTripId = savedTripId;
-        tripMode = prefs.getString("tripMode");
-      });
 
-      if (tripStarted && busId != null) {
+      // Restore trip state
+      tripStarted = true;
+      currentTripId = savedTripId;
+      tripMode = savedTripMode;
+
+      // Start background service safely
+      if (busId != null) {
         final service = FlutterBackgroundService();
 
-        if (!(await service.isRunning())) {
-          service.startService();
+        final bool isRunning = await service.isRunning();
+
+        if (!isRunning) {
+          await service.startService();
         }
-        FlutterBackgroundService().invoke("setBusId", {
-          "busId": busId
+
+        service.invoke("setBusId", {
+          "busId": busId,
         });
       }
 
-      _startLocationUpdates();
+      // Restart location updates
+      await _startLocationUpdates();
     }
 
     await _checkStatuses();
 
-    setState(() {
-    });
+    if (mounted) {
+      setState(() {});
+    }
   }
-
   @override
   void dispose() {
     positionStream?.cancel();
@@ -173,7 +180,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         .onValue
         .listen((event) async {
 
-      final data = event.snapshot.value as Map?;
+      final value = event.snapshot.value;
+
+      if (value == null || value is! Map) {
+        return;
+      }
+
+      final data = Map<String, dynamic>.from(value);
 
       // ================= ACTIVE =================
       if (data != null && data["status"] == "ACTIVE") {
@@ -231,10 +244,16 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _checkStatuses() async {
     final gpsEnabled = await Geolocator.isLocationServiceEnabled();
 
-    final ConnectivityResult connectivity =
-    await Connectivity().checkConnectivity();
+    bool netEnabled = false;
 
-    final bool netEnabled = connectivity != ConnectivityResult.none;
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      netEnabled = connectivity != ConnectivityResult.none;
+    } catch (e) {
+      print("Connectivity error: $e");
+    }
+
+    if (!mounted) return;
 
     setState(() {
       gpsOn = gpsEnabled;
@@ -280,93 +299,117 @@ class _DriverHomePageState extends State<DriverHomePage>
         accuracy: LocationAccuracy.high,
         distanceFilter: 5,
       ),
-    ).listen((position) {
+    ) .listen((position) async {
+          try {
 
-      if (!tripStarted) return;
+            if (!tripStarted) return;
 
-      // ================= SPEED STABILIZATION =================
-      double realSpeed = position.speed;
+            double realSpeed = position.speed;
 
-      if (realSpeed < 0.5) {
-        realSpeed = 0;
-      }
+            if (realSpeed < 0.5) {
+              realSpeed = 0;
+            }
 
-      realSpeed = (_lastSpeed * 0.7) + (realSpeed * 0.3);
-      realSpeed = double.parse(realSpeed.toStringAsFixed(1));
+            realSpeed = (_lastSpeed * 0.7) + (realSpeed * 0.3);
+            realSpeed = double.parse(realSpeed.toStringAsFixed(1));
 
-      _lastSpeed = realSpeed;
+            _lastSpeed = realSpeed;
 
-      // ================= FIREBASE UPDATE =================
-      if (busId != null && internetOn) {
-        FirebaseDatabase.instance.ref("buses/$busId/current").update({
-          "lat": position.latitude,
-          "lng": position.longitude,
-          "bearing": position.heading,
-          "speed": realSpeed,
-          "updatedAt": ServerValue.timestamp,
+            if (busId != null && internetOn) {
+              await FirebaseDatabase.instance
+                  .ref("buses/$busId/current")
+                  .update({
+                "lat": position.latitude,
+                "lng": position.longitude,
+                "bearing": position.heading,
+                "speed": realSpeed,
+                "updatedAt": ServerValue.timestamp,
+              });
+            }
+
+          } catch (e) {
+            print("Location update error: $e");
+          }
         });
-      }
-    });
   }
   //==================== START TRIP WITH MODE (NEW) =================
   Future<void> _startTripWithMode(String mode) async {
+    try {
+      if (busId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Bus ID not found")),
+        );
+        return;
+      }
 
-    if (busId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Bus ID not found")),
+      await _checkStatuses();
+
+      if (!gpsOn || !internetOn) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Enable GPS & Internet first")),
+        );
+        return;
+      }
+
+      final response = await ApiService.post(
+        "/drivers/start-trip",
+        {
+          "busId": busId,
+          "mode": mode,
+        },
       );
-      return;
-    }
-    await _checkStatuses();
 
-    if (!gpsOn || !internetOn) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Enable GPS & Internet first")),
-      );
-      return;
-    }
+      if (response.statusCode != 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to start trip")),
+        );
+        return;
+      }
 
-
-    final response = await ApiService.post(
-      "/drivers/start-trip",
-      {
-        "busId": busId,
-        "mode": mode,
-      },
-    );
-
-    if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
+
+      if (data == null || data["tripId"] == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Trip ID missing from server")),
+        );
+        return;
+      }
 
       currentTripId = data["tripId"];
 
       setState(() {
         tripStarted = true;
-        FlutterBackgroundService().startService();
-        FlutterBackgroundService().invoke("setBusId", {
-          "busId": busId
-        });
         tripMode = mode;
       });
+
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool("trackingActive", true);
       await prefs.setString("activeTripId", currentTripId!);
       await prefs.setString("tripMode", mode);
 
-      await _checkStatuses();
+      final service = FlutterBackgroundService();
 
-      _startLocationUpdates();
+      if (!(await service.isRunning())) {
+        await service.startService();
+      }
+
+      service.invoke("setBusId", {"busId": busId});
+
+      await _checkStatuses();
+      await _startLocationUpdates();
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("$mode trip started")),
       );
-    } else {
+
+    } catch (e) {
+      print("Start Trip Crash: $e");
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Failed to start trip")),
+        const SnackBar(content: Text("Something went wrong starting trip")),
       );
     }
   }
-
   //==================== END TRIP WITH MODE (NEW) =================
   Future<void> _endTripFromBackend() async {
     if (busId == null || currentTripId == null) return;
