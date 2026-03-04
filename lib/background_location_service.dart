@@ -5,7 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:firebase_database/firebase_database.dart';
 
 String? activeBusId;
-double _lastSpeed = 0;   // 🔥 speed smoothing memory
+double _lastSpeed = 0;
 
 Future<void> initializeService() async {
   final service = FlutterBackgroundService();
@@ -26,6 +26,7 @@ Future<void> initializeService() async {
 
 @pragma('vm:entry-point')
 Future<void> onStart(ServiceInstance service) async {
+
   if (service is AndroidServiceInstance) {
     service.setForegroundNotificationInfo(
       title: "Smart Bus Tracking",
@@ -33,47 +34,72 @@ Future<void> onStart(ServiceInstance service) async {
     );
   }
 
-  // ✅ RECEIVE UPDATED BUS ID FROM DRIVER APP
+  // 🔵 RECEIVE BUS ID FROM DRIVER APP
   service.on("setBusId").listen((event) {
     activeBusId = event?["busId"]?.toString().toUpperCase();
-    print("🔥 Background busId updated to: $activeBusId");
+    print("🔥 Background busId updated → $activeBusId");
   });
 
-  // ✅ STOP SERVICE WHEN TRIP ENDS
+  // 🔴 STOP SERVICE WHEN TRIP ENDS
   service.on("stopService").listen((event) {
     print("🛑 Background service stopping...");
     service.stopSelf();
   });
 
-  // ✅ GPS LOOP
-  Timer.periodic(const Duration(seconds: 5), (timer) async {
+  // 🟢 LOCATION LOOP
+  Timer.periodic(const Duration(seconds: 8), (timer) async {
 
+    if (service is AndroidServiceInstance) {
+      if (!(await service.isForegroundService())) {
+        timer.cancel();
+        return;
+      }
+    }
     if (activeBusId == null) return;
 
     try {
+
+      // 🔹 CHECK GPS SERVICE
+      bool gpsEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!gpsEnabled) {
+        print("❌ GPS disabled");
+        return;
+      }
+
+      // 🔹 CHECK LOCATION PERMISSION
+      LocationPermission permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        print("❌ Location permission denied");
+        return;
+      }
+
+      // 🔹 GET CURRENT POSITION
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
 
       // ================= SPEED STABILIZATION =================
+
       double realSpeed = position.speed;
 
-      // Remove tiny GPS noise
+      // remove GPS noise
       if (realSpeed < 0.5) {
         realSpeed = 0;
       }
 
-      // Exponential smoothing
+      // smoothing
       realSpeed = (_lastSpeed * 0.7) + (realSpeed * 0.3);
 
-      // Round to 1 decimal
+      // round to 1 decimal
       realSpeed = double.parse(realSpeed.toStringAsFixed(1));
 
       _lastSpeed = realSpeed;
 
-      print("📡 BG UPDATE → $activeBusId | Speed: $realSpeed m/s");
+      print("📡 BG UPDATE → Bus:$activeBusId | Speed:$realSpeed m/s");
 
-      // ✅ UPDATE FIREBASE (CORRECT PATH)
+      // 🔹 UPDATE FIREBASE
       await FirebaseDatabase.instance
           .ref("buses/$activeBusId/current")
           .update({
