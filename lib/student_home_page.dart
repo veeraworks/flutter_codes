@@ -37,13 +37,33 @@ class _StudentHomePageState extends State<StudentHomePage>
 
   int _currentIndex = 0;
   double? _etaMinutes;
+  LatLng? _busLocation;
+  Set<Polyline> _polylines = {};
   bool _locationPermissionGranted = false;
+  void _drawRoute(LatLng busLocation) {
+
+    final List<LatLng> routePoints = [
+      busLocation,
+      const LatLng(13.0827, 80.2707),
+    ];
+
+    final polyline = Polyline(
+      polylineId: const PolylineId("busRoute"),
+      color: Colors.blue,
+      width: 4,
+      points: routePoints,
+    );
+
+    setState(() {
+      _polylines = {polyline};
+    });
+  }
   int unreadCount = 0;
   StreamSubscription? _notificationListener;
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
   late Animation<Offset> _slideAnim;
-
+  GoogleMapController? _mapController;
   // ================= SECURITY UTILITIES =================
 
   String? _safePref(SharedPreferences prefs, String key) {
@@ -165,8 +185,7 @@ class _StudentHomePageState extends State<StudentHomePage>
 
     if (!snapshot.exists) return;
 
-    final data = Map<String, dynamic>.from(snapshot.value as Map);
-
+    final data = Map<String, dynamic>.from(snapshot.value as Map<dynamic, dynamic>);
     if (data["status"] == "ACTIVE") {
       setState(() {
         activeIssue = data["issueType"];
@@ -474,9 +493,26 @@ class _StudentHomePageState extends State<StudentHomePage>
         return;
       }
 
+      final map = Map<String, dynamic>.from(data as Map<dynamic, dynamic>);
+      final busLat = map["lat"];
+      final busLng = map["lng"];
+
+      if (busLat == null || busLng == null) return;
+
+      setState(() {
+        _busLocation = LatLng(busLat, busLng);
+      });
+
+      _drawRoute(_busLocation!);
+
+      _mapController?.animateCamera(
+        CameraUpdate.newLatLng(_busLocation!),
+      );
+
+      _calculateETA(busLat, busLng);
+
     });
   }
-
 
   //ISSUE REPORTING BY BUS ALERT
   Future<void> _listenToBusIssues() async {
@@ -503,7 +539,7 @@ class _StudentHomePageState extends State<StudentHomePage>
         return;
       }
 
-      final map = Map<String, dynamic>.from(data as Map);
+      final map = Map<String, dynamic>.from(data as Map<dynamic, dynamic>);
 
       if (map["status"] == "ACTIVE") {
         setState(() {
@@ -517,6 +553,40 @@ class _StudentHomePageState extends State<StudentHomePage>
     });
   }
 
+  Future<void> _calculateETA(double busLat, double busLng) async {
+    try {
+
+      Position pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      double distance = Geolocator.distanceBetween(
+        pos.latitude,
+        pos.longitude,
+        busLat,
+        busLng,
+      );
+
+      double minutes = distance / 250; // avg bus speed approximation
+
+      setState(() {
+
+        if (distance < 120) {
+          _etaMinutes = 0; // arrived
+        }
+        else if (distance < 300) {
+          _etaMinutes = -1; // nearby
+        }
+        else {
+          _etaMinutes = minutes;
+        }
+
+      });
+
+    } catch (e) {
+      safeLog("ETA calculation error");
+    }
+  }
   //LOAD STUDENT INFO
   Future<void> _loadStudentInfo() async {
     final prefs = await SharedPreferences.getInstance();
@@ -860,14 +930,33 @@ class _StudentHomePageState extends State<StudentHomePage>
                                   child: SizedBox(
                                     height: 170,
                                     child: GoogleMap(
+                                      onMapCreated: (controller) {
+                                        _mapController = controller;
+                                      },
+
                                       initialCameraPosition: CameraPosition(
-                                        target: LatLng(13.0827, 80.2707),
+                                        target: _busLocation ?? const LatLng(13.0827, 80.2707),
                                         zoom: 13,
                                       ),
+
                                       zoomControlsEnabled: false,
+
                                       myLocationEnabled: _locationPermissionGranted,
                                       myLocationButtonEnabled: _locationPermissionGranted,
-                                    ),
+
+                                      polylines: _polylines,
+
+                                      markers: {
+                                        if (_busLocation != null)
+                                          Marker(
+                                            markerId: const MarkerId("bus"),
+                                            position: _busLocation!,
+                                            icon: BitmapDescriptor.defaultMarkerWithHue(
+                                              BitmapDescriptor.hueAzure,
+                                            ),
+                                          ),
+                                      },
+                                    )
                                   ),
                                 ),
 
@@ -1170,7 +1259,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
           }
 
           final data = Map<String, dynamic>.from(
-              snapshot.data!.snapshot.value as Map);
+              snapshot.data!.snapshot.value as Map<dynamic, dynamic>);
 
           // 🔥 SORT KEYS BY TIMESTAMP DESC
           final keys = data.keys.toList()

@@ -51,10 +51,10 @@ class _StudentLoginPageState extends State<StudentLoginPage>
 
   // ✅ MANUAL LOGIN (Firebase NOT touched)
   Future<void> _login() async {
-    String studentId = idController.text.trim();
+    String studentId = idController.text.trim().toUpperCase();
     String mobileNumber = passwordController.text.trim();
 
-    if (studentId.isEmpty || mobileNumber.isEmpty) {
+    if (studentId.isEmpty || mobileNumber.isEmpty || mobileNumber.length < 10) {
       _shakeController.forward(from: 0);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -74,7 +74,11 @@ class _StudentLoginPageState extends State<StudentLoginPage>
         },
       );
 
-      final data = jsonDecode(response.body);
+      if (response.body.isEmpty) {
+        throw Exception("Empty server response");
+      }
+
+      final Map<String, dynamic> data = jsonDecode(response.body);
 
       if (response.statusCode == 200 && data["student"] != null) {
         Navigator.pushReplacement(
@@ -112,10 +116,13 @@ class _StudentLoginPageState extends State<StudentLoginPage>
   Future<void> _checkAutoLogin() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
 
-    bool? isLoggedIn = prefs.getBool("isLoggedIn");
-    String? role = prefs.getString("role");
+    bool isLoggedIn = prefs.getBool("isLoggedIn") ?? false;
+    String role = prefs.getString("role") ?? "";
 
     if (isLoggedIn == true && role == "student") {
+
+      if (!mounted) return;
+
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const StudentHomePage()),
