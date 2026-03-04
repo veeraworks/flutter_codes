@@ -180,9 +180,7 @@ class _MapPageState extends State<MapPage> {
       northeast: LatLng(maxLat, maxLng),
     );
 
-    _mapController?.animateCamera(
-      CameraUpdate.newLatLngBounds(bounds, 80),
-    );
+    CameraUpdate.newLatLngBounds(bounds, 80);
   }
 
   double _distanceMeters(LatLng a, LatLng b) {
@@ -388,7 +386,7 @@ class _MapPageState extends State<MapPage> {
                 .inMilliseconds / 1000;
 
         if (seconds > 0) {
-          _busSpeedMps = (distance / seconds).clamp(0, 25);
+          _busSpeedMps = (distance / seconds).clamp(0, 15);
         }
       }
 
