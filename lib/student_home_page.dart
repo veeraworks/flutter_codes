@@ -37,16 +37,67 @@ class _StudentHomePageState extends State<StudentHomePage>
 
   int _currentIndex = 0;
   double? _etaMinutes;
+  LatLng? _busLocation;
+  Set<Polyline> _polylines = {};
   bool _locationPermissionGranted = false;
+  void _drawRoute(LatLng busLocation) {
+
+    final List<LatLng> routePoints = [
+      busLocation,
+      const LatLng(13.0827, 80.2707),
+    ];
+
+    final polyline = Polyline(
+      polylineId: const PolylineId("busRoute"),
+      color: Colors.blue,
+      width: 4,
+      points: routePoints,
+    );
+
+    setState(() {
+      _polylines = {polyline};
+    });
+  }
   int unreadCount = 0;
   StreamSubscription? _notificationListener;
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
   late Animation<Offset> _slideAnim;
+  GoogleMapController? _mapController;
+  // ================= SECURITY UTILITIES =================
+
+  String? _safePref(SharedPreferences prefs, String key) {
+    final value = prefs.getString(key);
+    if (value == null) return null;
+
+    final clean = value.trim();
+    if (clean.isEmpty) return null;
+
+    return clean;
+  }
+
+  Future<void> _validateSession() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      if (!mounted) return;
+
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const WelcomePage()),
+            (route) => false,
+      );
+    }
+  }
+
+  void safeLog(String message) {
+    debugPrint("[BusTrackPro] $message");
+  }
   @override
   void initState() {
     super.initState();
-    _initLocationPermission();  // 👈 ADD THIS
+    _validateSession(); // security
+    _initLocationPermission();
     _animController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 700),
@@ -95,22 +146,36 @@ class _StudentHomePageState extends State<StudentHomePage>
   }
   Future<void> _initLocationPermission() async {
     try {
-      final permission = await Geolocator.requestPermission();
+
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return;
+
+      LocationPermission permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.deniedForever) return;
 
       if (permission == LocationPermission.always ||
           permission == LocationPermission.whileInUse) {
+
+        if (!mounted) return;
+
         setState(() {
           _locationPermissionGranted = true;
         });
       }
+
     } catch (e) {
-      print("Location permission error: $e");
+      safeLog("Location permission error");
     }
   }
 
   Future<void> _loadActiveIssue() async {
     final prefs = await SharedPreferences.getInstance();
-    final busId = prefs.getString("busId");
+    final busId = _safePref(prefs, "busId");
 
     if (busId == null) return;
 
@@ -120,8 +185,7 @@ class _StudentHomePageState extends State<StudentHomePage>
 
     if (!snapshot.exists) return;
 
-    final data = Map<String, dynamic>.from(snapshot.value as Map);
-
+    final data = Map<String, dynamic>.from(snapshot.value as Map<dynamic, dynamic>);
     if (data["status"] == "ACTIVE") {
       setState(() {
         activeIssue = data["issueType"];
@@ -141,12 +205,11 @@ class _StudentHomePageState extends State<StudentHomePage>
   }
   Future<void> _refreshStudentProfile() async {
     final prefs = await SharedPreferences.getInstance();
-    final regNo = prefs.getString("regNo");
-
-    print("🔥 REGNO BEFORE API CALL = $regNo");
+    final regNo = _safePref(prefs, "regNo");
+    debugPrint("REGNO BEFORE API CALL = $regNo");
 
     if (regNo == null || regNo.isEmpty) {
-      print("❌ REGNO IS NULL OR EMPTY");
+      debugPrint("REGNO IS NULL OR EMPTY");
       return;
     }
 
@@ -215,26 +278,30 @@ class _StudentHomePageState extends State<StudentHomePage>
   }
 
   void _listenForMessages() {
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
 
-      String title =
+      if (!mounted) return;
+
+      final title =
           message.notification?.title ??
               message.data['title'] ??
               "Notification";
 
-      String body =
+      final body =
           message.notification?.body ??
               message.data['body'] ??
               "";
 
-      if (!mounted) return;
+      if (title.isEmpty && body.isEmpty) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("$title\n$body")),
+        SnackBar(
+          content: Text("$title\n$body"),
+          duration: const Duration(seconds: 3),
+        ),
       );
     });
   }
-
   Future<void> _listenToNotifications() async {
     final prefs = await SharedPreferences.getInstance();
     final regNo = prefs.getString("regNo");
@@ -426,9 +493,26 @@ class _StudentHomePageState extends State<StudentHomePage>
         return;
       }
 
-      });
-  }
+      final map = Map<String, dynamic>.from(data as Map<dynamic, dynamic>);
+      final busLat = map["lat"];
+      final busLng = map["lng"];
 
+      if (busLat == null || busLng == null) return;
+
+      setState(() {
+        _busLocation = LatLng(busLat, busLng);
+      });
+
+      _drawRoute(_busLocation!);
+
+      _mapController?.animateCamera(
+        CameraUpdate.newLatLng(_busLocation!),
+      );
+
+      _calculateETA(busLat, busLng);
+
+    });
+  }
 
   //ISSUE REPORTING BY BUS ALERT
   Future<void> _listenToBusIssues() async {
@@ -455,7 +539,7 @@ class _StudentHomePageState extends State<StudentHomePage>
         return;
       }
 
-      final map = Map<String, dynamic>.from(data as Map);
+      final map = Map<String, dynamic>.from(data as Map<dynamic, dynamic>);
 
       if (map["status"] == "ACTIVE") {
         setState(() {
@@ -469,6 +553,40 @@ class _StudentHomePageState extends State<StudentHomePage>
     });
   }
 
+  Future<void> _calculateETA(double busLat, double busLng) async {
+    try {
+
+      Position pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      double distance = Geolocator.distanceBetween(
+        pos.latitude,
+        pos.longitude,
+        busLat,
+        busLng,
+      );
+
+      double minutes = distance / 250; // avg bus speed approximation
+
+      setState(() {
+
+        if (distance < 120) {
+          _etaMinutes = 0; // arrived
+        }
+        else if (distance < 300) {
+          _etaMinutes = -1; // nearby
+        }
+        else {
+          _etaMinutes = minutes;
+        }
+
+      });
+
+    } catch (e) {
+      safeLog("ETA calculation error");
+    }
+  }
   //LOAD STUDENT INFO
   Future<void> _loadStudentInfo() async {
     final prefs = await SharedPreferences.getInstance();
@@ -590,7 +708,7 @@ class _StudentHomePageState extends State<StudentHomePage>
                         children: [
                           GestureDetector(
                             onTap: () =>
-                                _scaffoldKey.currentState!.openDrawer(),
+                                _scaffoldKey.currentState?.openDrawer(),
                             child: const Icon(Icons.menu, color: Colors.white),
                           ),
                           const Text(
@@ -675,95 +793,95 @@ class _StudentHomePageState extends State<StudentHomePage>
                       style: TextStyle(fontSize: 19)),
                   const SizedBox(height: 10),
 
-              FadeTransition(
-                opacity: _fadeAnim,
-                child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
-                          blurRadius: 10,
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 42,
-                          height: 42,
-                          decoration: BoxDecoration(
-                            color: _etaMinutes == 0
-                                ? Colors.green
-                                : _etaMinutes == -1
-                                ? Colors.orange
-                                : Colors.amber,
-                            shape: BoxShape.circle,
+                  FadeTransition(
+                    opacity: _fadeAnim,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 10,
                           ),
-                          child: const Icon(Icons.directions_bus,
-                              color: Colors.white),
-                        ),
-                        const SizedBox(width: 12),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _etaMinutes == null
-                                  ? "Calculating..."
-                                  : _etaMinutes == 0
-                                  ? "🟢 Bus has arrived!"
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              color: _etaMinutes == 0
+                                  ? Colors.green
                                   : _etaMinutes == -1
-                                  ? "🟠 Bus is nearby"
-                                  : "🚌 Arriving in ${_etaMinutes!.toInt()} mins",
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: _etaMinutes == 0
-                                    ? Colors.green
+                                  ? Colors.orange
+                                  : Colors.amber,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.directions_bus,
+                                color: Colors.white),
+                          ),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _etaMinutes == null
+                                    ? "Calculating..."
+                                    : _etaMinutes == 0
+                                    ? "🟢 Bus has arrived!"
                                     : _etaMinutes == -1
-                                    ? Colors.orange
-                                    : Colors.black87,
+                                    ? "🟠 Bus is nearby"
+                                    : "🚌 Arriving in ${_etaMinutes!.toInt()} mins",
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: _etaMinutes == 0
+                                      ? Colors.green
+                                      : _etaMinutes == -1
+                                      ? Colors.orange
+                                      : Colors.black87,
+                                ),
                               ),
-                            ),
 
-                            const SizedBox(height: 6),
+                              const SizedBox(height: 6),
 
-                            // 🔥 ROUTE INFO
-                            Row(
-                              children: [
-                                const Icon(Icons.route, size: 16, color: Colors.black54),
-                                const SizedBox(width: 6),
-                                Text(
-                                  'Route: ${displayRoute ?? routeName ?? "Not Assigned"}',
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.black87,
+                              // 🔥 ROUTE INFO
+                              Row(
+                                children: [
+                                  const Icon(Icons.route, size: 16, color: Colors.black54),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Route: ${displayRoute ?? routeName ?? "Not Assigned"}',
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.black87,
+                                    ),
                                   ),
-                                ),
-                              ],
-                            ),
+                                ],
+                              ),
 
-                            const SizedBox(height: 4),
-                            Row(
-                              children: const [
-                                Icon(Icons.access_time, size: 14, color: Colors.black45),
-                                SizedBox(width: 6),
-                                Text(
-                                  'Live tracking active',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.black54,
+                              const SizedBox(height: 4),
+                              Row(
+                                children: const [
+                                  Icon(Icons.access_time, size: 14, color: Colors.black45),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    'Live tracking active',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.black54,
+                                    ),
                                   ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ],
+                                ],
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-              ),
                   const SizedBox(height: 18),
 
                   // ================= LIVE BUS TRACKING =================
@@ -812,14 +930,33 @@ class _StudentHomePageState extends State<StudentHomePage>
                                   child: SizedBox(
                                     height: 170,
                                     child: GoogleMap(
+                                      onMapCreated: (controller) {
+                                        _mapController = controller;
+                                      },
+
                                       initialCameraPosition: CameraPosition(
-                                        target: LatLng(13.0827, 80.2707),
+                                        target: _busLocation ?? const LatLng(13.0827, 80.2707),
                                         zoom: 13,
                                       ),
+
                                       zoomControlsEnabled: false,
+
                                       myLocationEnabled: _locationPermissionGranted,
                                       myLocationButtonEnabled: _locationPermissionGranted,
-                                    ),
+
+                                      polylines: _polylines,
+
+                                      markers: {
+                                        if (_busLocation != null)
+                                          Marker(
+                                            markerId: const MarkerId("bus"),
+                                            position: _busLocation!,
+                                            icon: BitmapDescriptor.defaultMarkerWithHue(
+                                              BitmapDescriptor.hueAzure,
+                                            ),
+                                          ),
+                                      },
+                                    )
                                   ),
                                 ),
 
@@ -1122,7 +1259,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
           }
 
           final data = Map<String, dynamic>.from(
-              snapshot.data!.snapshot.value as Map);
+              snapshot.data!.snapshot.value as Map<dynamic, dynamic>);
 
           // 🔥 SORT KEYS BY TIMESTAMP DESC
           final keys = data.keys.toList()

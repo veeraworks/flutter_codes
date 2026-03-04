@@ -33,44 +33,24 @@ class _StudentSignupStep2State extends State<StudentSignupStep2> {
   Future<void> sendOtp() async {
     setState(() => isLoading = true);
 
-    await _auth.verifyPhoneNumber(
-      phoneNumber: "+91${widget.phoneNumber}",
+    await Future.delayed(const Duration(seconds: 1)); // simulate OTP sending
 
-      /// AUTO VERIFY (Some devices)
-      verificationCompleted: (PhoneAuthCredential credential) async {
-        await _auth.signInWithCredential(credential);
-      },
+    setState(() => isLoading = false);
 
-      /// ERROR
-      verificationFailed: (FirebaseAuthException e) {
-        setState(() => isLoading = false);
+    if (!mounted) return;
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.message ?? "OTP Failed")),
-        );
-      },
-
-      /// OTP SENT ✅ → OPEN OTP PAGE
-      codeSent: (String verificationId, int? resendToken) {
-        setState(() => isLoading = false);
-
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => StudentOtpPage(
-              verificationId: verificationId,
-              regNo: widget.regNo,
-              phoneNumber: widget.phoneNumber,
-              isSignup: true,
-            ),
-          ),
-        );
-      },
-
-      codeAutoRetrievalTimeout: (String verificationId) {},
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => StudentOtpPage(
+          verificationId: "dev_otp", // dummy value
+          regNo: widget.regNo,
+          phoneNumber: widget.phoneNumber,
+          isSignup: true,
+        ),
+      ),
     );
   }
-
   // ================= UI =================
   @override
   Widget build(BuildContext context) {

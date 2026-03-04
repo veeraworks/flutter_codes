@@ -35,11 +35,11 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
     try {
       final response = await ApiService.post(
         "/drivers/check-driver",
-        {
-          "phone": widget.phoneNumber,
-        },
+          {
+            "phone": widget.phoneNumber,
+            "otp": otpController.text.trim(),
+          }
       ).timeout(const Duration(seconds: 8));
-
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -91,7 +91,11 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
       if (mounted) setState(() => isLoading = false);
     }
   }
-
+  @override
+  void dispose() {
+    otpController.dispose();
+    super.dispose();
+  }
   @override
   Widget build(BuildContext context) {
     return Scaffold(

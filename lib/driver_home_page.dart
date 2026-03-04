@@ -110,11 +110,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       if (busId != null) {
         final service = FlutterBackgroundService();
 
-        final bool isRunning = await service.isRunning();
-
-        if (!isRunning) {
-          await service.startService();
-        }
+        await service.startService();
 
         service.invoke("setBusId", {
           "busId": busId,
@@ -189,7 +185,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       final data = Map<String, dynamic>.from(value);
 
       // ================= ACTIVE =================
-      if (data != null && data["status"] == "ACTIVE") {
+      if (data["status"] == "ACTIVE") {
 
         final String? newBus = data["newBus"];
         final String? newRoute = data["tempRoute"];
@@ -297,7 +293,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     positionStream = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 5,
+        distanceFilter: 10,
       ),
     ) .listen((position) async {
           try {
@@ -315,9 +311,11 @@ class _DriverHomePageState extends State<DriverHomePage>
 
             _lastSpeed = realSpeed;
 
-            if (busId != null && internetOn) {
+            final currentBus = busId;
+
+            if (currentBus != null && internetOn) {
               await FirebaseDatabase.instance
-                  .ref("buses/$busId/current")
+                  .ref("buses/$currentBus/current")
                   .update({
                 "lat": position.latitude,
                 "lng": position.longitude,
@@ -389,9 +387,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       final service = FlutterBackgroundService();
 
-      if (!(await service.isRunning())) {
-        await service.startService();
-      }
+      await service.startService();
 
       service.invoke("setBusId", {"busId": busId});
 
@@ -421,7 +417,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     await prefs.remove("activeTripId");
     await prefs.remove("tripMode");
 
-    final response = await ApiService.post(
+    await ApiService.post(
       "/drivers/end-trip",
       {
         "busId": busId,
@@ -451,11 +447,13 @@ class _DriverHomePageState extends State<DriverHomePage>
     final response =
     await ApiService.get("/auth/driver-profile/$phone");
 
-    if (response.statusCode != 200) return;
+    if (response == null || response.statusCode != 200) {
+      print("Driver profile API failed");
+      return;
+    }
 
     final data = jsonDecode(response.body);
 
-    // 🔥 SAVE UPDATED VALUES
     await prefs.setString("driverName", data["name"]);
     await prefs.setString("busId", data["busId"]);
     await prefs.setString("busNumber", data["busId"]);
@@ -470,7 +468,6 @@ class _DriverHomePageState extends State<DriverHomePage>
       shift = data["shift"] ?? "-";
     });
 
-    // 🔥 UPDATE BACKGROUND SERVICE IF TRIP ACTIVE
     if (tripStarted && busId != null) {
       FlutterBackgroundService().invoke("setBusId", {
         "busId": busId,
@@ -646,8 +643,14 @@ class _DriverHomePageState extends State<DriverHomePage>
                 child: _infoCard(
                   title: 'Bus Information',
                   children: [
-                    _infoRow('Route', permRouteName),
-                    _infoRow('Bus Number', permBusNumber),
+                    _infoRow(
+                      'Route',
+                      isTempBusActive ? (tempRouteName ?? "-") : permRouteName,
+                    ),
+                    _infoRow(
+                      'Bus Number',
+                      isTempBusActive ? (tempBusNumber ?? "-") : permBusNumber,
+                    ),
                     _infoRow('Shift', shift),
                   ],
                 ),
