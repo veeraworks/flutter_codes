@@ -1,10 +1,11 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'service/api_service.dart';
 import 'package:flutter/material.dart';
 import 'student_home_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'student_otp_page.dart';
 import 'student_signup_page.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class StudentLoginPage extends StatefulWidget {
   const StudentLoginPage({super.key});
@@ -18,7 +19,7 @@ class _StudentLoginPageState extends State<StudentLoginPage>
 
   final TextEditingController idController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
-
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   bool _obscurePassword = false;
 
   late AnimationController _shakeController;
@@ -50,10 +51,10 @@ class _StudentLoginPageState extends State<StudentLoginPage>
 
   // ✅ MANUAL LOGIN (Firebase NOT touched)
   Future<void> _login() async {
-    String studentId = idController.text.trim();
+    String studentId = idController.text.trim().toUpperCase();
     String mobileNumber = passwordController.text.trim();
 
-    if (studentId.isEmpty || mobileNumber.isEmpty) {
+    if (studentId.isEmpty || mobileNumber.isEmpty || mobileNumber.length < 10) {
       _shakeController.forward(from: 0);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -65,25 +66,29 @@ class _StudentLoginPageState extends State<StudentLoginPage>
     }
 
     try {
-      final response = await http.post(
-        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/check-student"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
+      final response = await ApiService.post(
+        "/students/check-student",
+        {
           "regNo": studentId,
           "phone": mobileNumber,
-        }),
+        },
       );
 
-      final data = jsonDecode(response.body);
+      if (response.body.isEmpty) {
+        throw Exception("Empty server response");
+      }
+
+      final Map<String, dynamic> data = jsonDecode(response.body);
 
       if (response.statusCode == 200 && data["student"] != null) {
-
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
             builder: (context) => StudentOtpPage(
-              studentId: studentId,
+              verificationId: "DEV_MODE",
+              regNo: studentId,
               phoneNumber: mobileNumber,
+              isSignup: false,
             ),
           ),
         );
@@ -111,10 +116,13 @@ class _StudentLoginPageState extends State<StudentLoginPage>
   Future<void> _checkAutoLogin() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
 
-    bool? isLoggedIn = prefs.getBool("isLoggedIn");
-    String? role = prefs.getString("role");
+    bool isLoggedIn = prefs.getBool("isLoggedIn") ?? false;
+    String role = prefs.getString("role") ?? "";
 
     if (isLoggedIn == true && role == "student") {
+
+      if (!mounted) return;
+
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const StudentHomePage()),
@@ -270,8 +278,29 @@ class _StudentLoginPageState extends State<StudentLoginPage>
                                 onTap: () {
                                   Navigator.push(
                                     context,
-                                    MaterialPageRoute(
-                                      builder: (context) => const StudentSignupPage(),
+                                    PageRouteBuilder(
+                                      transitionDuration: const Duration(milliseconds: 350),
+                                      pageBuilder: (context, animation, secondaryAnimation) =>
+                                      const StudentSignupStep1(),
+                                      transitionsBuilder:
+                                          (context, animation, secondaryAnimation, child) {
+
+                                        const begin = Offset(1.0, 0.0);
+                                        const end = Offset.zero;
+
+                                        final tween = Tween(begin: begin, end: end)
+                                            .chain(CurveTween(curve: Curves.easeOutCubic));
+
+                                        final offsetAnimation = animation.drive(tween);
+
+                                        return SlideTransition(
+                                          position: offsetAnimation,
+                                          child: FadeTransition(
+                                            opacity: animation,
+                                            child: child,
+                                          ),
+                                        );
+                                      },
                                     ),
                                   );
                                 },

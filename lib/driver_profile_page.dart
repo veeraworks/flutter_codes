@@ -25,6 +25,8 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
   Future<void> _loadDriverData() async {
     final prefs = await SharedPreferences.getInstance();
 
+    print("RouteName from prefs: ${prefs.getString("routeName")}");
+
     setState(() {
       driverName = prefs.getString("driverName") ?? "-";
       busId = prefs.getString("busId") ?? "-";
@@ -48,7 +50,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
         child: Column(
           children: [
 
-            // PROFILE CARD
+            /// PROFILE CARD
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -63,19 +65,23 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
               ),
               child: Column(
                 children: [
+
                   const CircleAvatar(
                     radius: 40,
                     backgroundColor: Color(0xFFE0F7F3),
-                    child: Icon(Icons.person,
-                        size: 40, color: Color(0xFF00BFA6)),
+                    child: Icon(
+                      Icons.person,
+                      size: 40,
+                      color: Color(0xFF00BFA6),
+                    ),
                   ),
+
                   const SizedBox(height: 16),
 
-                  _ProfileRow("Name", driverName),
-                  _ProfileRow("Bus ID", busId),
-                  _ProfileRow("Route", routeName),
-                  _ProfileRow("Bus Number", busNumber),
-                  _ProfileRow("Phone", phoneNumber),
+                  ProfileRow("Name", driverName),
+                  ProfileRow("Bus ID", busId),
+                  ProfileRow("Route", routeName),
+                  ProfileRow("Phone", phoneNumber),
                 ],
               ),
             ),
@@ -86,10 +92,11 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
   }
 }
 
-class _ProfileRow extends StatelessWidget {
+class ProfileRow extends StatelessWidget {
   final String label;
   final String value;
-  const _ProfileRow(this.label, this.value);
+
+  const ProfileRow(this.label, this.value, {super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -98,7 +105,8 @@ class _ProfileRow extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: Colors.black54)),
+          Text(label,
+              style: const TextStyle(color: Colors.black54)),
           Text(
             value,
             style: const TextStyle(fontWeight: FontWeight.w600),

@@ -1,6 +1,7 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'service/api_service.dart';
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class TemporaryBusChangePage extends StatefulWidget {
@@ -11,19 +12,18 @@ class TemporaryBusChangePage extends StatefulWidget {
       _TemporaryBusChangePageState();
 }
 
-class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
+class _TemporaryBusChangePageState
+    extends State<TemporaryBusChangePage> {
 
   String currentBus = "-";
   String currentRoute = "-";
   String selectedRoute = "";
-  String? selectedBus;
-
-  bool isTempActive = false; // 🔥 KEY FLAG
+  bool isTempActive = false;
+  String selectedBus = "";
 
   final List<String> routes = [
     "Ashok Pillar",
     "Koyambedu",
-    "Madambakkam",
     "Nesapakkam",
     "Madipakkam",
     "Velachery",
@@ -31,7 +31,10 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
     "Anakaputhur",
     "Sithalapakkam",
     "Padappai",
+    "Guduvanchery"
   ];
+  final List<String> busNumbers =
+  List.generate(20, (index) => "BUS${(index + 1).toString().padLeft(2, '0')}");
 
   @override
   void initState() {
@@ -56,6 +59,7 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
       currentBus = savedBus;
       currentRoute = savedRoute;
       selectedRoute = savedRoute;
+      selectedBus = savedBus;
     });
 
     if (!prefs.containsKey("originalBusNumber")) {
@@ -67,6 +71,7 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
   // ================= APPLY TEMP CHANGE =================
   Future<void> _applyTempChange() async {
     final prefs = await SharedPreferences.getInstance();
+
     final String? originalBus = prefs.getString("originalBusNumber");
     final String? busId = prefs.getString("busId");
 
@@ -77,22 +82,41 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
       return;
     }
 
-    final String newBus = selectedBus ?? originalBus;
+    final String newBus =
+    selectedBus.isNotEmpty ? selectedBus : originalBus;
+
+    // 🚫 Prevent selecting same bus
+    if (newBus == currentBus) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Already using this bus")),
+      );
+      return;
+    }
+
     try {
       // ✅ UPDATE LOCAL STORAGE
       await prefs.setString("tempBusNumber", newBus);
       await prefs.setString("tempRouteName", selectedRoute);
       await prefs.setBool("isTempBusActive", true);
 
-      // ✅ CALL BACKEND (SENDS NOTIFICATION TO BUS TOPIC)
-      await http.post(
-        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/temporary-bus"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-            "busId": busId,
-            "tempBusNumber": newBus,
-            "active": true,
-        }),
+      // ✅ UPDATE FIREBASE
+      await FirebaseDatabase.instance
+          .ref("temporaryBusChanges/${busId.toUpperCase()}")
+          .set({
+        "newBus": newBus,
+        "tempRoute": selectedRoute,
+        "status": "ACTIVE",
+        "updatedAt": ServerValue.timestamp,
+      });
+
+      // ✅ CALL BACKEND
+      await ApiService.post(
+        "/drivers/temporary-bus",
+        {
+          "busId": busId,
+          "tempBusNumber": newBus,
+          "active": true,
+        },
       );
 
       setState(() {
@@ -113,7 +137,6 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
 
     } catch (e) {
       print("Temporary Bus Error: $e");
-
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Something went wrong")),
       );
@@ -123,8 +146,11 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
   // ================= CLEAR TEMP CHANGE =================
   Future<void> _clearTempChange() async {
     final prefs = await SharedPreferences.getInstance();
-    final String? originalBus = prefs.getString("originalBusNumber");
-    final String? originalRoute = prefs.getString("originalRoute");
+
+    final String? originalBus =
+    prefs.getString("originalBusNumber");
+    final String? originalRoute =
+    prefs.getString("originalRoute");
     final String? busId = prefs.getString("busId");
 
     if (originalBus == null || busId == null) {
@@ -140,14 +166,23 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
       await prefs.remove("tempBusNumber");
       await prefs.remove("tempRouteName");
 
+      // ✅ UPDATE FIREBASE
+      await FirebaseDatabase.instance
+          .ref("temporaryBusChanges/${busId.toUpperCase()}")
+          .update({
+        "newBus": null,
+        "tempRoute": null,
+        "status": "CLEARED",
+        "updatedAt": ServerValue.timestamp,
+      });
+
       // ✅ CALL BACKEND (NOTIFY RESTORE)
-      await http.post(
-        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/temporary-bus"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
+      await ApiService.post(
+        "/drivers/temporary-bus",
+        {
           "busId": busId,
           "active": false,
-        }),
+        },
       );
 
       setState(() {
@@ -166,15 +201,14 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
       Future.delayed(const Duration(milliseconds: 800), () {
         if (mounted) Navigator.pop(context, true);
       });
-
     } catch (e) {
       print("Clear Temp Error: $e");
-
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Something went wrong")),
       );
     }
   }
+
   // ================= UI =================
   @override
   Widget build(BuildContext context) {
@@ -191,6 +225,39 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
 
+            /// ✅ STATUS INDICATOR (ADD THIS BLOCK)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: isTempActive
+                    ? Colors.orange.shade100
+                    : Colors.green.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    isTempActive
+                        ? Icons.swap_horiz
+                        : Icons.check_circle,
+                    color:
+                    isTempActive ? Colors.orange : Colors.green,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    isTempActive
+                        ? "Temporary Bus Active"
+                        : "Using Permanent Bus",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
             // -------- CURRENT BUS INFO --------
             Container(
               padding: const EdgeInsets.all(16),
@@ -200,7 +267,9 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
                 children: [
                   const Text(
                     "Current Bus Information",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 12),
                   _infoRow("Bus Number", currentBus),
@@ -211,7 +280,7 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
 
             const SizedBox(height: 24),
 
-            // -------- TEMP CHANGE -----------------------------------
+            // -------- TEMP CHANGE --------
             Container(
               padding: const EdgeInsets.all(16),
               decoration: _cardDecoration(),
@@ -220,50 +289,52 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
                 children: [
                   const Text(
                     "Temporary Bus Change",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 12),
 
                   DropdownButtonFormField<String>(
-                    value: selectedBus,
-                    items: List.generate(20, (index) {
-                      String bus = "BUS${(index + 1).toString().padLeft(2, '0')}";
-                      return DropdownMenuItem(
-                        value: bus,
-                        child: Text(bus),
-                      );
-                    }),
+                    value: selectedBus.isNotEmpty ? selectedBus : null,
+                    items: busNumbers
+                        .map((bus) => DropdownMenuItem(
+                      value: bus,
+                      child: Text(bus),
+                    ))
+                        .toList(),
                     onChanged: (val) {
-                      setState(() {
-                        selectedBus = val!;
-                      });
+                      setState(() => selectedBus = val ?? "");
                     },
                     decoration: InputDecoration(
+                      hintText: "Select Bus Number",
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                       ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                     ),
                   ),
+
                   const SizedBox(height: 14),
 
                   DropdownButtonFormField<String>(
-                    value: selectedRoute,
-                    items: routes
+                    value: routes.contains(selectedRoute) ? selectedRoute : null,                    items: routes
                         .map((route) => DropdownMenuItem(
                       value: route,
                       child: Text(route),
                     ))
                         .toList(),
                     onChanged: (val) {
-                      setState(() => selectedRoute = val!);
+                      setState(() =>
+                      selectedRoute = val ?? "");
                     },
                     decoration: InputDecoration(
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius:
+                        BorderRadius.circular(14),
                       ),
                       contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12),
+                      const EdgeInsets.symmetric(
+                          horizontal: 12),
                     ),
                   ),
 
@@ -275,9 +346,11 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
                     child: ElevatedButton(
                       onPressed: _applyTempChange,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00BFA6),
+                        backgroundColor:
+                        const Color(0xFF00BFA6),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius:
+                          BorderRadius.circular(14),
                         ),
                       ),
                       child: const Text(
@@ -285,13 +358,13 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 16,
-                          fontWeight: FontWeight.w600,
+                          fontWeight:
+                          FontWeight.w600,
                         ),
                       ),
                     ),
                   ),
 
-                  // 🔥 CLEAR BUTTON — ONLY WHEN ACTIVE
                   if (isTempActive) ...[
                     const SizedBox(height: 10),
                     SizedBox(
@@ -300,16 +373,19 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
                       child: OutlinedButton(
                         onPressed: _clearTempChange,
                         style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Colors.red),
+                          side: const BorderSide(
+                              color: Colors.red),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
+                            borderRadius:
+                            BorderRadius.circular(14),
                           ),
                         ),
                         child: const Text(
                           "Clear Temporary Change",
                           style: TextStyle(
                             color: Colors.red,
-                            fontWeight: FontWeight.w600,
+                            fontWeight:
+                            FontWeight.w600,
                           ),
                         ),
                       ),
@@ -324,7 +400,7 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
     );
   }
 
-  // ================= HELPERS =================
+  // ================= HELPERS ==============================================
   BoxDecoration _cardDecoration() => BoxDecoration(
     color: Colors.white,
     borderRadius: BorderRadius.circular(16),
@@ -340,11 +416,15 @@ class _TemporaryBusChangePageState extends State<TemporaryBusChangePage> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        mainAxisAlignment:
+        MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: Colors.black54)),
+          Text(label,
+              style:
+              const TextStyle(color: Colors.black54)),
           Text(value,
-              style: const TextStyle(fontWeight: FontWeight.w500)),
+              style: const TextStyle(
+                  fontWeight: FontWeight.w500)),
         ],
       ),
     );

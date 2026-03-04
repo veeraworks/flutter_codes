@@ -1,9 +1,6 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:project_spt/main.dart';
 import 'driver_about_app_page.dart';
-import 'driver_login_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class DriverSettingsPage extends StatefulWidget {
@@ -18,26 +15,42 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
   bool isTripActive = false;
   String trackingStatus = "Inactive";
 
+  // ================= INIT =================
+
   @override
   void initState() {
     super.initState();
     _loadTrackingStatus();
   }
 
+  // ✅ refresh when page re-opened
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _loadTrackingStatus();
+  }
+
+  // ================= LOAD STATUS =================
+
   Future<void> _loadTrackingStatus() async {
     final prefs = await SharedPreferences.getInstance();
+
     final bool isActive = prefs.getBool("trackingActive") ?? false;
 
     setState(() {
       trackingStatus = isActive ? "Active" : "Inactive";
       isTripActive = isActive;
+      notificationsOn = prefs.getBool("notificationsOn") ?? true;
     });
   }
+
+  // ================= LOGOUT =================
+
   Future<void> _logout() async {
     final prefs = await SharedPreferences.getInstance();
     final bool isTracking = prefs.getBool("trackingActive") ?? false;
 
-    // 🚫 BLOCK LOGOUT IF TRIP ACTIVE
+    // 🚫 BLOCK logout if trip running
     if (isTracking) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -48,7 +61,7 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
       return;
     }
 
-    // ✅ SAFE LOGOUT
+    // ✅ Clear session
     await prefs.clear();
 
     if (!mounted) return;
@@ -59,6 +72,8 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
           (route) => false,
     );
   }
+
+  // ================= UI =================
 
   @override
   Widget build(BuildContext context) {
@@ -72,35 +87,44 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+
+          /// ================= NOTIFICATIONS =================
           _sectionCard(
             children: [
               SwitchListTile(
                 value: notificationsOn,
-                onChanged: (v) {
-                  setState(() => notificationsOn = v);
-                },
                 title: const Text("Notifications"),
                 subtitle: const Text("Bus alerts & updates"),
+                onChanged: (v) async {
+                  final prefs =
+                  await SharedPreferences.getInstance();
+
+                  setState(() => notificationsOn = v);
+                  await prefs.setBool("notificationsOn", v);
+                },
               ),
             ],
           ),
 
           const SizedBox(height: 12),
 
+          /// ================= TRACKING STATUS =================
           _sectionCard(
             children: [
               _readOnlyTile(
                 icon: Icons.location_on,
                 title: "Tracking Status",
                 value: trackingStatus,
-                valueColor:
-                trackingStatus == "Active" ? Colors.green : Colors.red,
+                valueColor: trackingStatus == "Active"
+                    ? Colors.green
+                    : Colors.red,
               ),
             ],
           ),
 
           const SizedBox(height: 12),
 
+          /// ================= APP INFO =================
           _sectionCard(
             children: [
               ListTile(
@@ -121,13 +145,15 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
 
           const SizedBox(height: 24),
 
+          /// ================= LOGOUT BUTTON =================
           SizedBox(
             width: double.infinity,
             height: 48,
             child: ElevatedButton(
               onPressed: isTripActive ? null : _logout,
               style: ElevatedButton.styleFrom(
-                backgroundColor: isTripActive ? Colors.grey : Colors.red,
+                backgroundColor:
+                isTripActive ? Colors.grey : Colors.red,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
                 ),
@@ -140,11 +166,13 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
                 ),
               ),
             ),
-          )
+          ),
         ],
       ),
     );
   }
+
+  // ================= UI HELPERS =================
 
   Widget _sectionCard({required List<Widget> children}) {
     return Container(
@@ -171,30 +199,6 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
           fontSize: 15,
           fontWeight: FontWeight.w600,
           color: valueColor,
-        ),
-      ),
-    );
-  }
-
-  void _showAppInfo(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            Text(
-              "Smart Bus Tracking",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: 8),
-            Text("Version 1.0.0"),
-            SizedBox(height: 8),
-          ],
         ),
       ),
     );

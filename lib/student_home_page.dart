@@ -1,16 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:project_spt/student_map_page.dart';
 import 'settings_page.dart';
-import 'map_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'main.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'service/api_service.dart';
+import 'package:geolocator/geolocator.dart';
 
 class StudentHomePage extends StatefulWidget {
   const StudentHomePage({super.key});
@@ -19,7 +19,8 @@ class StudentHomePage extends StatefulWidget {
   State<StudentHomePage> createState() => _StudentHomePageState();
 }
 
-class _StudentHomePageState extends State<StudentHomePage> {
+class _StudentHomePageState extends State<StudentHomePage>
+    with SingleTickerProviderStateMixin {
   String? studentName;
   String? routeName;
   String? displayRoute;
@@ -29,24 +30,99 @@ class _StudentHomePageState extends State<StudentHomePage> {
   StreamSubscription<DatabaseEvent>? _issueListener;
   StreamSubscription<DatabaseEvent>? _tempBusListener;
   StreamSubscription<DatabaseEvent>? _busListener;
+  Timer? _etaTimer;
   String lastUpdatedText = "Just now";
-  DateTime? _lastMovingTime;
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   int _currentIndex = 0;
   double? _etaMinutes;
-  Position? _studentPosition;
-  Timer? _studentLocationTimer;
+  LatLng? _busLocation;
+  Set<Polyline> _polylines = {};
+  bool _locationPermissionGranted = false;
+  void _drawRoute(LatLng busLocation) {
+
+    final List<LatLng> routePoints = [
+      busLocation,
+      const LatLng(13.0827, 80.2707),
+    ];
+
+    final polyline = Polyline(
+      polylineId: const PolylineId("busRoute"),
+      color: Colors.blue,
+      width: 4,
+      points: routePoints,
+    );
+
+    setState(() {
+      _polylines = {polyline};
+    });
+  }
   int unreadCount = 0;
   StreamSubscription? _notificationListener;
+  late AnimationController _animController;
+  late Animation<double> _fadeAnim;
+  late Animation<Offset> _slideAnim;
+  GoogleMapController? _mapController;
+  // ================= SECURITY UTILITIES =================
 
-  String? _prevTempRoute; // track previous temp route to avoid duplicate snackbars
+  String? _safePref(SharedPreferences prefs, String key) {
+    final value = prefs.getString(key);
+    if (value == null) return null;
+
+    final clean = value.trim();
+    if (clean.isEmpty) return null;
+
+    return clean;
+  }
+
+  Future<void> _validateSession() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      if (!mounted) return;
+
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const WelcomePage()),
+            (route) => false,
+      );
+    }
+  }
+
+  void safeLog(String message) {
+    debugPrint("[BusTrackPro] $message");
+  }
   @override
   void initState() {
     super.initState();
+    _validateSession(); // security
+    _initLocationPermission();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+
+    _fadeAnim = CurvedAnimation(
+      parent: _animController,
+      curve: Curves.easeOut,
+    );
+
+    _slideAnim = Tween<Offset>(
+      begin: const Offset(0, -0.15),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _animController,
+        curve: Curves.easeOutCubic,
+      ),
+    );
+
+    _animController.forward();
+    _loadActiveIssue();
     _initializeStudent();
   }
+
   Future<void> _initializeStudent() async {
 
     // Load fresh profile from backend
@@ -67,97 +143,127 @@ class _StudentHomePageState extends State<StudentHomePage> {
     _listenToTemporaryBus();
 
     // Start GPS tracking
-    _startLocationTracking();
   }
-  void _startLocationTracking() {
-    Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.medium,
-    ).then((pos) {
-      _studentPosition = pos;
-    }).catchError((e) {
-      print("Initial student GPS error: $e");
-    });
+  Future<void> _initLocationPermission() async {
+    try {
 
-    _studentLocationTimer =
-        Timer.periodic(const Duration(seconds: 20), (_) async {
-          try {
-            _studentPosition = await Geolocator.getCurrentPosition(
-              desiredAccuracy: LocationAccuracy.medium,
-            );
-          } catch (e) {
-            print("Student GPS error: $e");
-          }
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return;
+
+      LocationPermission permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.deniedForever) return;
+
+      if (permission == LocationPermission.always ||
+          permission == LocationPermission.whileInUse) {
+
+        if (!mounted) return;
+
+        setState(() {
+          _locationPermissionGranted = true;
         });
+      }
+
+    } catch (e) {
+      safeLog("Location permission error");
+    }
   }
+
+  Future<void> _loadActiveIssue() async {
+    final prefs = await SharedPreferences.getInstance();
+    final busId = _safePref(prefs, "busId");
+
+    if (busId == null) return;
+
+    final snapshot = await FirebaseDatabase.instance
+        .ref("busIssues/$busId")
+        .get();
+
+    if (!snapshot.exists) return;
+
+    final data = Map<String, dynamic>.from(snapshot.value as Map<dynamic, dynamic>);
+    if (data["status"] == "ACTIVE") {
+      setState(() {
+        activeIssue = data["issueType"];
+      });
+    }
+  }
+
   @override
   void dispose() {
     _issueListener?.cancel();
     _busListener?.cancel();
     _tempBusListener?.cancel();
+    _etaTimer?.cancel();
     _notificationListener?.cancel();
-    _studentLocationTimer?.cancel();
+    _animController.dispose();
     super.dispose();
   }
-
   Future<void> _refreshStudentProfile() async {
     final prefs = await SharedPreferences.getInstance();
-    final regNo = prefs.getString("regNo");
+    final regNo = _safePref(prefs, "regNo");
+    debugPrint("REGNO BEFORE API CALL = $regNo");
 
-    if (regNo == null) return;
+    if (regNo == null || regNo.isEmpty) {
+      debugPrint("REGNO IS NULL OR EMPTY");
+      return;
+    }
 
     final oldBusId = prefs.getString("busId");
-    final response = await http.get(
-      Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/students/profile?regNo=$regNo"),
+
+    // ✅ THIS IS THE ONLY LINE CHANGED
+    final response = await ApiService.get(
+      "/auth/student-profile/${regNo.trim().toUpperCase()}",
     );
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final newBusId = data["busId"];
+    if (response.statusCode == 404) {
+      print("❌ Student not found in backend");
 
-      print("STUDENT BUS ID FROM BACKEND = $newBusId");
-      print("OLD BUS ID = $oldBusId");
+      if (!mounted) return;
 
-      if (oldBusId != null && oldBusId != newBusId) {
-        print("Unsubscribing from old topic: ${oldBusId.toLowerCase()}");
-        await FirebaseMessaging.instance
-            .unsubscribeFromTopic(oldBusId.toLowerCase());
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Session expired. Please login again."),
+        ),
+      );
 
-      print("Subscribing to new topic: ${newBusId.toLowerCase()}");
+      return;
+    }
+
+    if (response.statusCode != 200) {
+      print("❌ API FAILED: ${response.statusCode}");
+      return;
+    }
+
+    final data = jsonDecode(response.body);
+    final newBusId = data["busId"];
+
+    if (oldBusId != null && oldBusId != newBusId) {
+      await FirebaseMessaging.instance
+          .unsubscribeFromTopic(oldBusId.toLowerCase());
+    }
+
+    if (newBusId != null && newBusId.isNotEmpty) {
       await FirebaseMessaging.instance
           .subscribeToTopic(newBusId.toLowerCase());
-
-      await prefs.setString("busId", newBusId);
-      await prefs.setString("routeName", data["busName"]);
-      await prefs.setString("studentName", data["name"]);
-
-      setState(() {
-        studentName = data["name"];
-        routeName = data["busName"];
-        displayRoute = data["busName"];
-        busId = newBusId;
-      });
-    }
-  }
-
-  Future<void> _subscribeToRoute() async {
-    final prefs = await SharedPreferences.getInstance();
-    final busId = prefs.getString("busId");
-
-    if (busId != null && busId.isNotEmpty) {
-
-      print("🔥 Subscribing NOW to topic: ${busId.toLowerCase()}");
-
-      await FirebaseMessaging.instance
-          .subscribeToTopic(busId.toLowerCase());
-
-      print("✅ Subscribed successfully!");
-    } else {
-      print("❌ busId is NULL or empty!");
     }
 
-    String? token = await FirebaseMessaging.instance.getToken();
-    print("🔥 FCM TOKEN: $token");
+    await prefs.setString("busId", newBusId ?? "");
+    await prefs.setString("routeName", data["busName"] ?? "");
+    await prefs.setString("studentName", data["name"] ?? "");
+    await prefs.setString("stopName", data["boardingPoint"] ?? "");
+
+    setState(() {
+      studentName = data["name"];
+      routeName = data["busName"];
+      displayRoute = data["busName"];
+      busId = newBusId;
+    });
+    print("🔥 FULL STUDENT PROFILE RESPONSE = $data");
   }
 
   Future<void> _requestPermission() async {
@@ -172,26 +278,30 @@ class _StudentHomePageState extends State<StudentHomePage> {
   }
 
   void _listenForMessages() {
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
 
-      String title =
+      if (!mounted) return;
+
+      final title =
           message.notification?.title ??
               message.data['title'] ??
               "Notification";
 
-      String body =
+      final body =
           message.notification?.body ??
               message.data['body'] ??
               "";
 
-      if (!mounted) return;
+      if (title.isEmpty && body.isEmpty) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("$title\n$body")),
+        SnackBar(
+          content: Text("$title\n$body"),
+          duration: const Duration(seconds: 3),
+        ),
       );
     });
   }
-
   Future<void> _listenToNotifications() async {
     final prefs = await SharedPreferences.getInstance();
     final regNo = prefs.getString("regNo");
@@ -243,14 +353,27 @@ class _StudentHomePageState extends State<StudentHomePage> {
             onPressed: () async {
               Navigator.pop(context);
 
-              // 🔥 Clear SharedPreferences session
               final prefs = await SharedPreferences.getInstance();
+              final oldBusId = prefs.getString("busId");
+
+              // 🔥 UNSUBSCRIBE FROM FCM TOPIC
+              if (oldBusId != null && oldBusId.isNotEmpty) {
+                final topic = oldBusId.toLowerCase().trim();
+                print("Unsubscribing from topic: $topic");
+
+                await FirebaseMessaging.instance
+                    .unsubscribeFromTopic(topic);
+              }
+
+              // 🔥 CLEAR SESSION
               await prefs.clear();
 
-              // 🔥 Optional: Firebase sign out (safe to keep)
+              // 🔥 SIGN OUT
               await FirebaseAuth.instance.signOut();
 
-              // 🔥 Navigate & remove back stack
+              if (!mounted) return;
+
+              // 🔥 REMOVE BACK STACK
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(builder: (_) => const WelcomePage()),
@@ -317,6 +440,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
         // 🔥 4️⃣ Re-attach listeners for new bus
         await _listenToBus();
+
         await _listenToBusIssues();
       }
 
@@ -340,6 +464,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
         });
 
         await _listenToBus();
+
         await _listenToBusIssues();
       }
     });
@@ -368,84 +493,24 @@ class _StudentHomePageState extends State<StudentHomePage> {
         return;
       }
 
-      final map = Map<String, dynamic>.from(data as Map);
+      final map = Map<String, dynamic>.from(data as Map<dynamic, dynamic>);
+      final busLat = map["lat"];
+      final busLng = map["lng"];
 
-      if (!map.containsKey("lat") || !map.containsKey("lng")) {
-        setState(() {
-          _etaMinutes = null;
-        });
-        return;
-      }
-
-      // 🔥 USE CACHED STUDENT POSITION (battery friendly)
-      if (_studentPosition == null) return;
-
-      double lat = map["lat"];
-      double lng = map["lng"];
-
-      double distance = Geolocator.distanceBetween(
-        lat,
-        lng,
-        _studentPosition!.latitude,
-        _studentPosition!.longitude,
-      );
-
-      // ================= ARRIVAL LOGIC =================
-
-      // ✅ ARRIVED (within 30 meters)
-      if (distance < 30) {
-        setState(() {
-          _etaMinutes = 0;
-        });
-        return;
-      }
-
-
-      // ✅ NEARBY (30m – 200m)
-      if (distance >= 30 && distance < 200) {
-        setState(() {
-          _etaMinutes = -1;
-        });
-        return;
-      }
-
-      // ================= SPEED LOGIC =================
-
-      double speed = (map["speed"] ?? 0).toDouble();
-
-      // Track last moving time
-      if (speed > 1.5) {
-        _lastMovingTime = DateTime.now();
-      }
-
-      // If very slow → assume traffic speed
-      if (speed > 0 && speed < 1.5) {
-        speed = 3.0; // ~10 km/h
-      }
-
-      // If stopped
-      if (speed <= 0) {
-        if (_lastMovingTime != null &&
-            DateTime.now().difference(_lastMovingTime!).inSeconds < 20) {
-          // Recently moving → temporary stop (signal)
-          speed = 3.0;
-        } else {
-          // Fully stopped
-          setState(() {
-            _etaMinutes = null;
-          });
-          return;
-        }
-      }
-
-      // ================= ETA CALCULATION =========================
-
-      double timeInSeconds = distance / speed;
-      double timeInMinutes = timeInSeconds / 60;
+      if (busLat == null || busLng == null) return;
 
       setState(() {
-        _etaMinutes = timeInMinutes.ceilToDouble();
+        _busLocation = LatLng(busLat, busLng);
       });
+
+      _drawRoute(_busLocation!);
+
+      _mapController?.animateCamera(
+        CameraUpdate.newLatLng(_busLocation!),
+      );
+
+      _calculateETA(busLat, busLng);
+
     });
   }
 
@@ -474,7 +539,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
         return;
       }
 
-      final map = Map<String, dynamic>.from(data as Map);
+      final map = Map<String, dynamic>.from(data as Map<dynamic, dynamic>);
 
       if (map["status"] == "ACTIVE") {
         setState(() {
@@ -488,6 +553,40 @@ class _StudentHomePageState extends State<StudentHomePage> {
     });
   }
 
+  Future<void> _calculateETA(double busLat, double busLng) async {
+    try {
+
+      Position pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      double distance = Geolocator.distanceBetween(
+        pos.latitude,
+        pos.longitude,
+        busLat,
+        busLng,
+      );
+
+      double minutes = distance / 250; // avg bus speed approximation
+
+      setState(() {
+
+        if (distance < 120) {
+          _etaMinutes = 0; // arrived
+        }
+        else if (distance < 300) {
+          _etaMinutes = -1; // nearby
+        }
+        else {
+          _etaMinutes = minutes;
+        }
+
+      });
+
+    } catch (e) {
+      safeLog("ETA calculation error");
+    }
+  }
   //LOAD STUDENT INFO
   Future<void> _loadStudentInfo() async {
     final prefs = await SharedPreferences.getInstance();
@@ -587,68 +686,71 @@ class _StudentHomePageState extends State<StudentHomePage> {
                   textAlign: TextAlign.center,
                 ),
               ),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(20, 40, 20, 28),
-              decoration: const BoxDecoration(
-                color: Color(0xFF00BFA6),
-                borderRadius: BorderRadius.only(
-                  bottomLeft: Radius.circular(24),
-                  bottomRight: Radius.circular(24),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            SlideTransition(
+              position: _slideAnim,
+              child: FadeTransition(
+                opacity: _fadeAnim,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(20, 40, 20, 28),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF00BFA6),
+                    borderRadius: BorderRadius.only(
+                      bottomLeft: Radius.circular(24),
+                      bottomRight: Radius.circular(24),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      GestureDetector(
-                        onTap: () {
-                          _scaffoldKey.currentState!.openDrawer();
-                        },
-                        child: const Icon(Icons.menu, color: Colors.white),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          GestureDetector(
+                            onTap: () =>
+                                _scaffoldKey.currentState?.openDrawer(),
+                            child: const Icon(Icons.menu, color: Colors.white),
+                          ),
+                          const Text(
+                            'BusTrackPro',
+                            style: TextStyle(color: Colors.white, fontSize: 20),
+                          ),
+                        ],
                       ),
-                      const Text('BusTrackPro',
-                          style:
-                          TextStyle(color: Colors.white, fontSize: 20)),
+                      const SizedBox(height: 22),
+
+                      Text(
+                        'Welcome, ${studentName ?? "Student"}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 26,
+                        ),
+                      ),
+
+                      const SizedBox(height: 6),
+
+                      Text(
+                        'Route: ${displayRoute ?? "Not Assigned"}',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 16,
+                        ),
+                      ),
+
+                      const SizedBox(height: 2),
+
+                      const Text(
+                        'Track your bus in real-time',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 16,
+                        ),
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 22),
-
-                  Text(
-                    'Welcome, ${studentName ?? "Student"}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 26,
-                    ),
-                  ),
-
-                  const SizedBox(height: 6),
-
-                  // 🔥 SHOW ACTUAL ROUTE NAME
-                  Text(
-                    'Route: ${displayRoute ?? "Not Assigned"}',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 16,
-                    ),
-                  ),
-
-                  const SizedBox(height: 2),
-
-                  const Text(
-                    'Track your bus in real-time',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 16,
-                    ),
-                  ),
-
-                ],
+                ),
               ),
             ),
-
             const SizedBox(height: 16),
 
             //Issue Reporting by Driver
@@ -691,156 +793,216 @@ class _StudentHomePageState extends State<StudentHomePage> {
                       style: TextStyle(fontSize: 19)),
                   const SizedBox(height: 10),
 
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
-                          blurRadius: 10,
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 42,
-                          height: 42,
-                          decoration: BoxDecoration(
-                            color: _etaMinutes == 0
-                                ? Colors.green
-                                : _etaMinutes == -1
-                                ? Colors.orange
-                                : Colors.amber,
-                            shape: BoxShape.circle,
+                  FadeTransition(
+                    opacity: _fadeAnim,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 10,
                           ),
-                          child: const Icon(Icons.directions_bus,
-                              color: Colors.white),
-                        ),
-                        const SizedBox(width: 12),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _etaMinutes == null
-                                  ? "Calculating..."
-                                  : _etaMinutes == 0
-                                  ? "🟢 Bus has arrived!"
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              color: _etaMinutes == 0
+                                  ? Colors.green
                                   : _etaMinutes == -1
-                                  ? "🟠 Bus is nearby"
-                                  : "🚌 Arriving in ${_etaMinutes!.toInt()} mins",
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: _etaMinutes == 0
-                                    ? Colors.green
+                                  ? Colors.orange
+                                  : Colors.amber,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.directions_bus,
+                                color: Colors.white),
+                          ),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _etaMinutes == null
+                                    ? "Calculating..."
+                                    : _etaMinutes == 0
+                                    ? "🟢 Bus has arrived!"
                                     : _etaMinutes == -1
-                                    ? Colors.orange
-                                    : Colors.black87,
+                                    ? "🟠 Bus is nearby"
+                                    : "🚌 Arriving in ${_etaMinutes!.toInt()} mins",
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: _etaMinutes == 0
+                                      ? Colors.green
+                                      : _etaMinutes == -1
+                                      ? Colors.orange
+                                      : Colors.black87,
+                                ),
                               ),
-                            ),
 
-                            const SizedBox(height: 6),
+                              const SizedBox(height: 6),
 
-                            // 🔥 ROUTE INFO
-                            Row(
-                              children: [
-                                const Icon(Icons.route, size: 16, color: Colors.black54),
-                                const SizedBox(width: 6),
-                                Text(
-                                  'Route: ${displayRoute ?? routeName ?? "Not Assigned"}',
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.black87,
+                              // 🔥 ROUTE INFO
+                              Row(
+                                children: [
+                                  const Icon(Icons.route, size: 16, color: Colors.black54),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Route: ${displayRoute ?? routeName ?? "Not Assigned"}',
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.black87,
+                                    ),
                                   ),
-                                ),
-                              ],
-                            ),
+                                ],
+                              ),
 
-                            const SizedBox(height: 4),
-                            Row(
-                              children: const [
-                                Icon(Icons.access_time, size: 14, color: Colors.black45),
-                                SizedBox(width: 6),
-                                Text(
-                                  'Live tracking active',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.black54,
+                              const SizedBox(height: 4),
+                              Row(
+                                children: const [
+                                  Icon(Icons.access_time, size: 14, color: Colors.black45),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    'Live tracking active',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.black54,
+                                    ),
                                   ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ],
+                                ],
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-
                   const SizedBox(height: 18),
 
-                  // LIVE TRACKING
-                  const Text('Live Bus Tracking',
-                      style: TextStyle(fontSize: 18)),
-                  const SizedBox(height: 10),
+                  // ================= LIVE BUS TRACKING =================
 
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
-                          blurRadius: 10,
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        const SizedBox(
-                          height: 170,
-                          child: GoogleMap(
-                            initialCameraPosition: CameraPosition(
-                              target: LatLng(13.0827, 80.2707),
-                              zoom: 13,
-                            ),
-                            zoomControlsEnabled: false,
-                            myLocationEnabled: true,
-                            myLocationButtonEnabled: false,
-                          ),
-                        ),
+                  FadeTransition(
+                    opacity: _fadeAnim,
+                    child: SlideTransition(
+                      position: _slideAnim,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
 
-                        InkWell(
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => const MapPage()),
-                            );
-                          },
-                          child: Container(
-                            width: double.infinity,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFF3E64FF),
-                              borderRadius: BorderRadius.only(
-                                bottomLeft: Radius.circular(16),
-                                bottomRight: Radius.circular(16),
-                              ),
-                            ),
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 12),
-                              child: Center(
-                                child: Text('Open Map',
-                                    style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 16)),
-                              ),
+                          const Text(
+                            'Live Bus Tracking',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                        ),
-                      ],
+
+                          const SizedBox(height: 10),
+
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 400),
+                            curve: Curves.easeOut,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.06),
+                                  blurRadius: 12,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              children: [
+
+                                /// 🗺️ MINI MAP
+                                ClipRRect(
+                                  borderRadius: const BorderRadius.only(
+                                    topLeft: Radius.circular(16),
+                                    topRight: Radius.circular(16),
+                                  ),
+                                  child: SizedBox(
+                                    height: 170,
+                                    child: GoogleMap(
+                                      onMapCreated: (controller) {
+                                        _mapController = controller;
+                                      },
+
+                                      initialCameraPosition: CameraPosition(
+                                        target: _busLocation ?? const LatLng(13.0827, 80.2707),
+                                        zoom: 13,
+                                      ),
+
+                                      zoomControlsEnabled: false,
+
+                                      myLocationEnabled: _locationPermissionGranted,
+                                      myLocationButtonEnabled: _locationPermissionGranted,
+
+                                      polylines: _polylines,
+
+                                      markers: {
+                                        if (_busLocation != null)
+                                          Marker(
+                                            markerId: const MarkerId("bus"),
+                                            position: _busLocation!,
+                                            icon: BitmapDescriptor.defaultMarkerWithHue(
+                                              BitmapDescriptor.hueAzure,
+                                            ),
+                                          ),
+                                      },
+                                    )
+                                  ),
+                                ),
+
+                                /// 🔵 OPEN MAP BUTTON (ANIMATED)
+                                InkWell(
+                                  borderRadius: const BorderRadius.only(
+                                    bottomLeft: Radius.circular(16),
+                                    bottomRight: Radius.circular(16),
+                                  ),
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => const MapPage(),
+                                      ),
+                                    );
+                                  },
+                                  child: Ink(
+                                    width: double.infinity,
+                                    decoration: const BoxDecoration(
+                                      color: Color(0xFF3E64FF),
+                                      borderRadius: BorderRadius.only(
+                                        bottomLeft: Radius.circular(16),
+                                        bottomRight: Radius.circular(16),
+                                      ),
+                                    ),
+                                    child: const Padding(
+                                      padding: EdgeInsets.symmetric(vertical: 14),
+                                      child: Center(
+                                        child: Text(
+                                          'Open Map',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
 
@@ -972,31 +1134,74 @@ class _NotificationsPageState extends State<NotificationsPage> {
       regNo = savedRegNo;
     });
   }
+  Future<void> _clearAllNotifications() async {
+    if (regNo == null) return;
 
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Clear all notifications?"),
+        content: const Text(
+            "This will permanently delete all notification history."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text("Clear All"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    await FirebaseDatabase.instance
+        .ref("notifications/$regNo")
+        .remove();
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("All notifications cleared"),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
   Future<void> _markAllAsRead() async {
     final prefs = await SharedPreferences.getInstance();
     final regNo = prefs.getString("regNo");
 
     if (regNo == null) return;
 
-    final snapshot = await FirebaseDatabase.instance
-        .ref("notifications/$regNo")
-        .get();
+    final ref =
+    FirebaseDatabase.instance.ref("notifications/$regNo");
+
+    final snapshot = await ref.get();
 
     if (!snapshot.exists) return;
 
     final data = Map<String, dynamic>.from(snapshot.value as Map);
 
-    for (var key in data.keys) {
-      await FirebaseDatabase.instance
-          .ref("notifications/$regNo/$key")
-          .update({"read": true});
-    }
-  }
+    Map<String, dynamic> updates = {};
 
-  String formatTime(int timestamp) {
+    for (var key in data.keys) {
+      updates["$key/read"] = true;
+    }
+
+    await ref.update(updates);
+  }
+  String formatTime(dynamic timestamp) {
+    if (timestamp == null) return "Just now";
+
     final now = DateTime.now();
-    final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
+    final date = DateTime.fromMillisecondsSinceEpoch(
+        (timestamp is int) ? timestamp : 0);
+
     final difference = now.difference(date);
 
     if (difference.inMinutes < 1) return "Just now";
@@ -1022,6 +1227,14 @@ class _NotificationsPageState extends State<NotificationsPage> {
           style: TextStyle(color: Colors.white),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          if (regNo != null)
+            IconButton(
+              icon: const Icon(Icons.delete_sweep, color: Colors.white),
+              tooltip: "Clear All",
+              onPressed: _clearAllNotifications,
+            ),
+        ],
       ),
       body: StreamBuilder(
         stream: FirebaseDatabase.instance
@@ -1046,12 +1259,15 @@ class _NotificationsPageState extends State<NotificationsPage> {
           }
 
           final data = Map<String, dynamic>.from(
-              snapshot.data!.snapshot.value as Map);
+              snapshot.data!.snapshot.value as Map<dynamic, dynamic>);
 
           // 🔥 SORT KEYS BY TIMESTAMP DESC
           final keys = data.keys.toList()
-            ..sort((a, b) =>
-                data[b]["timestamp"].compareTo(data[a]["timestamp"]));
+            ..sort((a, b) {
+              final tsA = data[a]["timestamp"] ?? 0;
+              final tsB = data[b]["timestamp"] ?? 0;
+              return tsB.compareTo(tsA);
+            });
 
           return ListView.builder(
             padding: const EdgeInsets.all(16),
@@ -1097,7 +1313,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     );
   }
 }
-    class NotificationCard extends StatelessWidget {
+class NotificationCard extends StatelessWidget {
   final String title;
   final String message;
   final String time;
@@ -1118,86 +1334,86 @@ class _NotificationsPageState extends State<NotificationsPage> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-          ),
-        ],
-      ),
-      child:Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.15),
-              shape: BoxShape.circle,
+        margin: const EdgeInsets.only(bottom: 14),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
             ),
-            child: Icon(icon, color: color),
-          ),
-          const SizedBox(width: 12),
+          ],
+        ),
+        child:Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.15),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color),
+            ),
+            const SizedBox(width: 12),
 
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight:
-                          isRead ? FontWeight.w500 : FontWeight.w700,
-                          color: Colors.black,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight:
+                            isRead ? FontWeight.w500 : FontWeight.w700,
+                            color: Colors.black,
+                          ),
                         ),
                       ),
+
+                      if (!isRead)
+                        Container(
+                          width: 8,
+                          height: 8,
+                          margin: const EdgeInsets.only(left: 6),
+                          decoration: const BoxDecoration(
+                            color: Colors.blue,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 4),
+
+                  Text(
+                    message,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Colors.black87,
                     ),
-
-                    if (!isRead)
-                      Container(
-                        width: 8,
-                        height: 8,
-                        margin: const EdgeInsets.only(left: 6),
-                        decoration: const BoxDecoration(
-                          color: Colors.blue,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                  ],
-                ),
-
-                const SizedBox(height: 4),
-
-                Text(
-                  message,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Colors.black87,
                   ),
-                ),
 
-                const SizedBox(height: 6),
+                  const SizedBox(height: 6),
 
-                Text(
-                  time,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.black54,
+                  Text(
+                    time,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.black54,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
-      )
+          ],
+        )
     );
   }
 }

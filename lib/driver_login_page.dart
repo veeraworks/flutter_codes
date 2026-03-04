@@ -1,9 +1,8 @@
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'service/api_service.dart';
 import 'driver_otp_page.dart';
 
 class DriverLoginPage extends StatefulWidget {
@@ -65,10 +64,11 @@ class _DriverLoginPageState extends State<DriverLoginPage>
     });
 
     try {
-      final response = await http.post(
-        Uri.parse("https://null-sheldon-unstudded.ngrok-free.dev/drivers/check-driver"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"phone": phone}),
+      final response = await ApiService.post(
+        "/drivers/check-driver",
+        {
+          "phone": phone,
+        },
       ).timeout(const Duration(seconds: 8));
 
       final data = jsonDecode(response.body);
@@ -76,7 +76,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
       if (response.statusCode == 200 && data["driver"] != null) {
 
         final driver = data["driver"];
-        print("BACKEND DRIVER DATA: $driver");
 
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString("busId", driver["busId"] ?? "");
@@ -86,7 +85,7 @@ class _DriverLoginPageState extends State<DriverLoginPage>
         await prefs.setString("shift", driver["shift"] ?? "");
 
         await prefs.setString("driverName", driver["name"] ?? "");
-        await prefs.setString("phoneNumber", phone);
+        await prefs.setString("phone", phone);
 
         await prefs.setBool("isLoggedIn", true);
         await prefs.setString("role", "driver");
@@ -100,7 +99,7 @@ class _DriverLoginPageState extends State<DriverLoginPage>
           MaterialPageRoute(
             builder: (_) => DriverOtpPage(
               phoneNumber: phone,
-              driverName: data["driver"]["name"], // 👈 use backend name
+              driverName: driver["name"],
             ),
           ),
         );
@@ -163,7 +162,19 @@ class _DriverLoginPageState extends State<DriverLoginPage>
           ),
 
           Positioned.fill(
-            child: Container(color: Colors.white.withOpacity(0.50)),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.white.withOpacity(0.15),
+                    Colors.white.withOpacity(0.85),
+                    Colors.white,
+                  ],
+                ),
+              ),
+            ),
           ),
 
           Center(
@@ -228,7 +239,8 @@ class _DriverLoginPageState extends State<DriverLoginPage>
 
                         TextField(
                           controller: phoneController,
-                          keyboardType: TextInputType.phone,
+                          keyboardType: TextInputType.number,
+                          maxLength: 10,
                           decoration: inputDecoration(
                             hint: 'Phone Number',
                             icon: Icons.phone,
