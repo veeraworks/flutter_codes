@@ -40,10 +40,11 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
     setState(() => isLoading = true);
 
     try {
-      // ✅ DEV MODE OTP (TEMPORARY)
-      if (otpController.text.trim() != "123456") {
+
+      // ✅ DEV MODE — allow any OTP
+      if (otpController.text.trim().isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Invalid OTP")),
+          const SnackBar(content: Text("Enter OTP")),
         );
         setState(() => isLoading = false);
         return;
@@ -79,7 +80,7 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
       await prefs.setString("regNo", widget.regNo.toUpperCase());
       await prefs.setString("studentName", student["name"] ?? "");
       await prefs.setString("busId", student["busId"] ?? "");
-      await prefs.setString("routeName", student["routeName"] ?? "");
+      await prefs.setString("routeName", student["busName"] ?? "");
       await prefs.setString("boardingPoint", student["boardingPoint"] ?? "");
 
       // 🔔 Subscribe to bus topic

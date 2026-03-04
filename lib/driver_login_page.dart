@@ -76,7 +76,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
       if (response.statusCode == 200 && data["driver"] != null) {
 
         final driver = data["driver"];
-        print("BACKEND DRIVER DATA: $driver");
 
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString("busId", driver["busId"] ?? "");
@@ -86,7 +85,7 @@ class _DriverLoginPageState extends State<DriverLoginPage>
         await prefs.setString("shift", driver["shift"] ?? "");
 
         await prefs.setString("driverName", driver["name"] ?? "");
-        await prefs.setString("phoneNumber", phone);
+        await prefs.setString("phone", phone);
 
         await prefs.setBool("isLoggedIn", true);
         await prefs.setString("role", "driver");
@@ -100,7 +99,7 @@ class _DriverLoginPageState extends State<DriverLoginPage>
           MaterialPageRoute(
             builder: (_) => DriverOtpPage(
               phoneNumber: phone,
-              driverName: data["driver"]["name"], // 👈 use backend name
+              driverName: driver["name"],
             ),
           ),
         );
@@ -240,7 +239,8 @@ class _DriverLoginPageState extends State<DriverLoginPage>
 
                         TextField(
                           controller: phoneController,
-                          keyboardType: TextInputType.phone,
+                          keyboardType: TextInputType.number,
+                          maxLength: 10,
                           decoration: inputDecoration(
                             hint: 'Phone Number',
                             icon: Icons.phone,

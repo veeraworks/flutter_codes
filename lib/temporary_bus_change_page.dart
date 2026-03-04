@@ -72,8 +72,7 @@ class _TemporaryBusChangePageState
   Future<void> _applyTempChange() async {
     final prefs = await SharedPreferences.getInstance();
 
-    final String? originalBus =
-    prefs.getString("originalBusNumber");
+    final String? originalBus = prefs.getString("originalBusNumber");
     final String? busId = prefs.getString("busId");
 
     if (originalBus == null || busId == null) {
@@ -86,13 +85,21 @@ class _TemporaryBusChangePageState
     final String newBus =
     selectedBus.isNotEmpty ? selectedBus : originalBus;
 
+    // 🚫 Prevent selecting same bus
+    if (newBus == currentBus) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Already using this bus")),
+      );
+      return;
+    }
+
     try {
       // ✅ UPDATE LOCAL STORAGE
       await prefs.setString("tempBusNumber", newBus);
       await prefs.setString("tempRouteName", selectedRoute);
       await prefs.setBool("isTempBusActive", true);
 
-      // ✅ UPDATE FIREBASE REALTIME DB
+      // ✅ UPDATE FIREBASE
       await FirebaseDatabase.instance
           .ref("temporaryBusChanges/${busId.toUpperCase()}")
           .set({
@@ -102,7 +109,7 @@ class _TemporaryBusChangePageState
         "updatedAt": ServerValue.timestamp,
       });
 
-      // ✅ CALL BACKEND (SEND NOTIFICATION)
+      // ✅ CALL BACKEND
       await ApiService.post(
         "/drivers/temporary-bus",
         {
@@ -121,13 +128,13 @@ class _TemporaryBusChangePageState
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text("Temporary bus applied successfully")),
+        const SnackBar(content: Text("Temporary bus applied successfully")),
       );
 
       Future.delayed(const Duration(milliseconds: 800), () {
         if (mounted) Navigator.pop(context, true);
       });
+
     } catch (e) {
       print("Temporary Bus Error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
@@ -310,8 +317,7 @@ class _TemporaryBusChangePageState
                   const SizedBox(height: 14),
 
                   DropdownButtonFormField<String>(
-                    value: selectedRoute,
-                    items: routes
+                    value: routes.contains(selectedRoute) ? selectedRoute : null,                    items: routes
                         .map((route) => DropdownMenuItem(
                       value: route,
                       child: Text(route),
