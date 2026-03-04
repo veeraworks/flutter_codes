@@ -9,12 +9,50 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'dart:math';
 
+class KalmanLatLng {
+  double q = 0.00001;
+  double r = 0.001;
+
+  double pLat = 1;
+  double pLng = 1;
+
+  double lat = 0;
+  double lng = 0;
+
+  bool initialized = false;
+
+  LatLng process(LatLng measurement) {
+
+    if (!initialized) {
+      lat = measurement.latitude;
+      lng = measurement.longitude;
+      initialized = true;
+      return measurement;
+    }
+
+    pLat = pLat + q;
+    pLng = pLng + q;
+
+    double kLat = pLat / (pLat + r);
+    double kLng = pLng / (pLng + r);
+
+    lat = lat + kLat * (measurement.latitude - lat);
+    lng = lng + kLng * (measurement.longitude - lng);
+
+    pLat = (1 - kLat) * pLat;
+    pLng = (1 - kLng) * pLng;
+
+    return LatLng(lat, lng);
+  }
+}
+
 class DriverMapPage extends StatefulWidget {
   const DriverMapPage({super.key});
 
   @override
   State<DriverMapPage> createState() => _DriverMapPageState();
 }
+
 
 class _DriverMapPageState extends State<DriverMapPage> {
 
@@ -23,6 +61,8 @@ class _DriverMapPageState extends State<DriverMapPage> {
   LatLng? _driverLocation;
   double _driverBearing = 0;
   double _currentSpeed = 0;
+
+  final KalmanLatLng _gpsKalman = KalmanLatLng();
 
   final DatabaseReference _busRef =
   FirebaseDatabase.instance.ref();
@@ -49,15 +89,15 @@ class _DriverMapPageState extends State<DriverMapPage> {
   Marker? _busMarker;
   Set<Polyline> _polylines = {};
   StreamSubscription<DatabaseEvent>? _polylineListener;
-  StreamSubscription<DatabaseEvent>? _busLocationListener;
   List<Map<String, dynamic>> _routeStops = [];
   List<LatLng> _routePoints = [];
+  int _currentRouteIndex = 0;
   bool _arrivalTriggered = false;
 
   bool _routeFitted = false;
   String? busId;
 
-  // ================= INIT =================
+// ================= INIT =================
 
   @override
   void initState() {
@@ -73,18 +113,157 @@ class _DriverMapPageState extends State<DriverMapPage> {
       return;
     }
 
-    _listenToBusLocation();
     await _loadBusIcon();
+
     _driverLocation = const LatLng(12.9516, 80.1462);
-    _updateDriverMarker();
 
     await _listenRoutePolyline();
+    await _startDriverGPS();
+    _updateDriverMarker();
 
     _etaTimer = Timer.periodic(
       const Duration(seconds: 20),
           (_) => _fetchDriverETA(),
     );
   }
+
+// ================= BUS SMOOTH ANIMATION =================
+
+  Future<void> _animateBus(LatLng newPosition) async {
+    if (_driverLocation == null) {
+      _driverLocation = newPosition;
+      _updateDriverMarker();
+      return;
+    }
+
+    const int steps = 8; // smoother animation
+
+    double latStep =
+        (newPosition.latitude - _driverLocation!.latitude) / steps;
+
+    double lngStep =
+        (newPosition.longitude - _driverLocation!.longitude) / steps;
+
+    for (int i = 0; i < steps; i++) {
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      _driverLocation = LatLng(
+        _driverLocation!.latitude + latStep,
+        _driverLocation!.longitude + lngStep,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _updateDriverMarker();
+      });
+    }
+  }
+  Future<void> _animateAlongRoute(LatLng snappedPoint) async {
+
+    if (_routePoints.isEmpty) {
+      await _animateBus(snappedPoint);
+      return;
+    }
+
+    // Find closest route index
+    int closestIndex = 0;
+    double minDistance = double.infinity;
+
+    for (int i = 0; i < _routePoints.length; i++) {
+
+      final d = Geolocator.distanceBetween(
+        snappedPoint.latitude,
+        snappedPoint.longitude,
+        _routePoints[i].latitude,
+        _routePoints[i].longitude,
+      );
+
+      if (d < minDistance) {
+        minDistance = d;
+        closestIndex = i;
+      }
+    }
+
+    // Move bus along route points
+    for (int i = _currentRouteIndex;
+    i <= closestIndex && i < _routePoints.length;
+    i++) {
+
+      if (!mounted) return;
+
+      _driverLocation = _routePoints[i];
+
+      setState(() {
+        _updateDriverMarker();
+      });
+
+      // Smooth animation delay
+      await Future.delayed(const Duration(milliseconds: 120));
+    }
+
+    _currentRouteIndex = closestIndex;
+  }
+// ================= GPS STREAM =================
+
+  StreamSubscription<Position>? _gpsSubscription;
+
+  Future<void> _startDriverGPS() async {
+
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      print("GPS disabled");
+      return;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      print("Location permission denied");
+      return;
+    }
+
+    _gpsSubscription = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 5,
+      ),
+    ).listen((position) async {
+
+      final rawPoint = LatLng(position.latitude, position.longitude);
+
+// 🚀 Apply Kalman smoothing
+      LatLng filteredPoint = _gpsKalman.process(rawPoint);
+
+// 🚀 Snap filtered point to road
+      LatLng snappedPoint = _snapToRoute(filteredPoint);
+
+      double newHeading = position.heading;
+
+      if (!newHeading.isNaN && newHeading >= 0) {
+        _driverBearing = _driverBearing + (newHeading - _driverBearing) * 0.2;
+      }
+
+      _currentSpeed = position.speed;
+
+      await _animateAlongRoute(snappedPoint);
+
+      _updateStepDistance();
+      _publishDriverLocation();
+      _checkStopArrival();
+
+      if (_followBus && _driverLocation != null) {
+        _startNavigationCamera(_driverLocation!);
+      }
+
+    });
+  }
+
   void _updateNavigationInstruction() {
     if (_navSteps.isEmpty) return;
 
@@ -126,40 +305,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
       _navIcon = icon;
     });
   }
-  void _listenToBusLocation() {
-    if (busId == null) return;
 
-    _busLocationListener = FirebaseDatabase.instance
-        .ref("buses/$busId/current")
-        .onValue
-        .listen((event) {
-
-      final data = event.snapshot.value as Map?;
-      if (data == null) return;
-
-      final lat = data["lat"];
-      final lng = data["lng"];
-      final bearing = data["bearing"];
-      final speed = data["speed"];
-
-      if (lat == null || lng == null) return;
-
-      setState(() {
-        _driverLocation = LatLng(
-          (lat as num).toDouble(),
-          (lng as num).toDouble(),
-        );
-
-        _driverBearing = (bearing ?? 0).toDouble();
-        _currentSpeed = (speed ?? 0).toDouble();
-
-        _updateDriverMarker();
-      });
-      if (_followBus && _driverLocation != null) {
-        _startNavigationCamera(_driverLocation!);
-      }
-    });
-  }
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     busId = prefs.getString("busId")?.toUpperCase();
@@ -499,6 +645,21 @@ class _DriverMapPageState extends State<DriverMapPage> {
       flat: true,
     );
   }
+// ================= FIREBASE PUBLISH =================
+  Future<void> _publishDriverLocation() async {
+    if (busId == null || _driverLocation == null) return;
+
+    if (_currentSpeed < 0.5) return;
+
+    await _busRef.child("buses/$busId/current").update({
+      "lat": _driverLocation!.latitude,
+      "lng": _driverLocation!.longitude,
+      "bearing": _driverBearing,
+      "speed": _currentSpeed,
+      "timestamp": DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
 // ================= ROUTE STOPS =================
   Future<void> _fetchRouteStops() async {
     if (busId == null) return;
@@ -629,9 +790,9 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
   @override
   void dispose() {
+    _gpsSubscription?.cancel();
     _polylineListener?.cancel();
     _etaTimer?.cancel();
-    _busLocationListener?.cancel();
     _cameraTimer?.cancel();
     _mapController?.dispose();
     super.dispose();
