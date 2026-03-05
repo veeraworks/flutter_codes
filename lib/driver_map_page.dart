@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'dart:math';
+const String googleKey = "";
 
 class KalmanLatLng {
   double q = 0.00001;
@@ -68,6 +69,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
   FirebaseDatabase.instance.ref();
 
   bool _followBus = true;
+  LatLng? _realGpsLocation;
   LatLng? _lastEtaLocation;
   LatLng? _cameraPosition;
   Timer? _cameraTimer;
@@ -93,6 +95,10 @@ class _DriverMapPageState extends State<DriverMapPage> {
   List<LatLng> _routePoints = [];
   int _currentRouteIndex = 0;
   bool _arrivalTriggered = false;
+  LatLng? _lastRouteUpdate;
+  DateTime? _lastDynamicRouteTime;
+  StreamSubscription<DatabaseEvent>? _altRoutesListener;
+  List<dynamic> _alternativeRoutes = [];
 
   int _lastSnappedIndex = 0;
 
@@ -118,10 +124,25 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
     await _loadBusIcon();
 
-
     await _listenRoutePolyline();
-    await _fetchRouteStops();   // 👈 ADD THIS
+    await _listenAlternativeRoutes();
+    await _fetchRouteStops();
     await _startDriverGPS();
+
+    Timer.periodic(
+      const Duration(minutes: 2),
+          (_) => _checkBetterRoute(),
+    );
+
+    // 🚍 publish GPS every 3 seconds
+    _publishTimer = Timer.periodic(
+      const Duration(seconds: 3),
+          (_) {
+        _publishDriverLocation();
+      },
+    );
+
+    _etaTimer?.cancel();
 
     _etaTimer = Timer.periodic(
       const Duration(seconds: 20),
@@ -171,8 +192,11 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
   StreamSubscription<Position>? _gpsSubscription;
 
-  Future<void> _startDriverGPS() async {
+  Timer? _publishTimer;
 
+  Future<void>  _startDriverGPS() async {
+    await _gpsSubscription?.cancel();
+    _gpsSubscription = null;
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       print("GPS disabled");
@@ -191,24 +215,61 @@ class _DriverMapPageState extends State<DriverMapPage> {
       return;
     }
 
-    _gpsSubscription = Geolocator.getPositionStream(
+    Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 3,
+        distanceFilter: 0,
       ),
     ).listen((position) async {
 
       // 📍 Raw GPS
-      final rawPoint =
-      LatLng(position.latitude, position.longitude);
+      final rawPoint = LatLng(position.latitude, position.longitude);
 
-      print("Driver GPS = ${position.latitude}, ${position.longitude}");
-
-      // 🧠 Kalman smoothing
+// filtered for UI only
       LatLng filteredPoint =
-      _gpsKalman.process(rawPoint);
+      _snapToRoute(_gpsKalman.process(rawPoint));
 
-      // 🚍 Smooth bus animation
+// real GPS stored separately
+      _driverLocation = filteredPoint;
+      _realGpsLocation = rawPoint;
+
+      // ================= ROUTE DEVIATION DETECTION =================
+
+      if (_routePoints.isNotEmpty) {
+
+        double minDistance = double.infinity;
+
+        for (LatLng p in _routePoints) {
+
+          double d = Geolocator.distanceBetween(
+            filteredPoint.latitude,
+            filteredPoint.longitude,
+            p.latitude,
+            p.longitude,
+          );
+
+          if (d < minDistance) {
+            minDistance = d;
+          }
+        }
+
+        // 🚨 Driver left route
+        if (minDistance > 60) {
+
+          if (_lastDynamicRouteTime == null ||
+              DateTime.now().difference(_lastDynamicRouteTime!) >
+                  const Duration(seconds: 10)) {
+
+            print("⚠ Driver deviated from route");
+
+            _lastDynamicRouteTime = DateTime.now();
+
+            _generateDynamicRoute();
+          }
+        }
+      }
+
+      // 🚍 Smooth animation
       await _animateBus(filteredPoint);
 
       // 🧭 Heading update
@@ -221,7 +282,9 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
       // 🚀 Speed update
       _currentSpeed = position.speed;
-
+      if (_currentSpeed < 0.3) {
+        _currentSpeed = 0;
+      }
       // 🎯 First GPS fix → move camera
       if (!_firstLocationFix && _mapController != null) {
 
@@ -238,15 +301,25 @@ class _DriverMapPageState extends State<DriverMapPage> {
         );
       }
 
-      // 🔁 Update UI marker
-      if (mounted) {
-        setState(() {
-          _updateDriverMarker();
-        });
-      }
+      // Update navigation polyline only when bus moved enough
+      if (_lastRouteUpdate == null ||
+          Geolocator.distanceBetween(
+            _lastRouteUpdate!.latitude,
+            _lastRouteUpdate!.longitude,
+            _driverLocation!.latitude,
+            _driverLocation!.longitude,
+          ) > 40) {
 
-      // 📡 Publish to Firebase
-      _publishDriverLocation();
+        if (_lastDynamicRouteTime == null ||
+            DateTime.now().difference(_lastDynamicRouteTime!) >
+                const Duration(seconds: 10)) {
+
+          _lastRouteUpdate = _driverLocation;
+          _lastDynamicRouteTime = DateTime.now();
+
+          _generateDynamicRoute();
+        }
+      }
 
       // 🛑 Stop arrival detection
       _checkStopArrival();
@@ -256,9 +329,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
       // 🎥 Navigation camera follow
       if (_followBus && _driverLocation != null) {
-        if (_driverLocation != null) {
-          _startNavigationCamera(_driverLocation!);
-        }
+        _startNavigationCamera(_driverLocation!);
       }
 
     });
@@ -665,14 +736,16 @@ class _DriverMapPageState extends State<DriverMapPage> {
   }
 // ================= FIREBASE PUBLISH =================
   Future<void> _publishDriverLocation() async {
-    if (busId == null || _driverLocation == null) return;
+    if (busId == null || _realGpsLocation == null) return;
+
+    if (_driverLocation!.latitude == 0 || _driverLocation!.longitude == 0) return;
 
     await _busRef.child("buses/$busId/current").update({
-      "lat": _driverLocation!.latitude,
-      "lng": _driverLocation!.longitude,
+      "lat": _realGpsLocation!.latitude,
+      "lng": _realGpsLocation!.longitude,
       "bearing": _driverBearing,
       "speed": _currentSpeed,
-      "timestamp": DateTime.now().millisecondsSinceEpoch,
+      "updatedAt": ServerValue.timestamp,
     });
   }
 // ================= ROUTE STOPS =================
@@ -729,6 +802,62 @@ class _DriverMapPageState extends State<DriverMapPage> {
     }
   }
 // ================= ROUTE POLYLINE LISTENER =================
+
+  Future<void> _generateDynamicRoute() async {
+
+    if (_driverLocation == null || _nextStopName == null) return;
+
+    final nextStop = _routeStops.firstWhere(
+          (s) => s["stopName"] == _nextStopName,
+      orElse: () => {},
+    );
+
+    if (nextStop.isEmpty) return;
+
+    LatLng destination = LatLng(
+      (nextStop["lat"] as num).toDouble(),
+      (nextStop["lng"] as num).toDouble(),
+    );
+
+    String url =
+        "https://maps.googleapis.com/maps/api/directions/json"
+        "?origin=${_driverLocation!.latitude},${_driverLocation!.longitude}"
+        "&destination=${destination.latitude},${destination.longitude}"
+        "&mode=driving"
+        "&key=$googleKey";
+
+    final response = await ApiService.getExternal(url);
+
+    final data = jsonDecode(response.body);
+
+    if (data["routes"].isEmpty) return;
+
+    String encoded = data["routes"][0]["overview_polyline"]["points"];
+
+    PolylinePoints polylinePoints = PolylinePoints();
+
+    List<PointLatLng> decoded =
+    polylinePoints.decodePolyline(encoded);
+
+    List<LatLng> points =
+    decoded.map((p) => LatLng(p.latitude, p.longitude)).toList();
+
+    setState(() {
+
+      _polylines.removeWhere(
+              (p) => p.polylineId.value == "dynamicRoute");
+
+      _polylines.add(
+        Polyline(
+          polylineId: const PolylineId("dynamicRoute"),
+          points: points,
+          width: 7,
+          color: Colors.grey,
+        ),
+      );
+    });
+  }
+
   Future<void> _listenRoutePolyline() async {
     if (busId == null) return;
 
@@ -770,233 +899,305 @@ class _DriverMapPageState extends State<DriverMapPage> {
       }
     });
   }
+  Future<void> _listenAlternativeRoutes() async {
+
+    if (busId == null) return;
+
+    _altRoutesListener?.cancel();
+
+    _altRoutesListener = FirebaseDatabase.instance
+        .ref("busRoutes/$busId/routeAlternatives")
+        .onValue
+        .listen((event) {
+
+      final data = event.snapshot.value;
+
+      if (data == null) return;
+
+      final routes = List.from(data as List);
+
+      _alternativeRoutes = routes;
+
+      print("🚍 Alternative routes loaded: ${routes.length}");
+    });
+  }
+
+
+  void _checkBetterRoute() {
+
+    if (_alternativeRoutes.isEmpty) return;
+
+    int bestIndex = 0;
+    int bestDuration = _alternativeRoutes[0]["duration"];
+
+    for (int i = 1; i < _alternativeRoutes.length; i++) {
+
+      int duration = _alternativeRoutes[i]["duration"];
+
+      if (duration < bestDuration) {
+        bestDuration = duration;
+        bestIndex = i;
+      }
+    }
+
+    String encodedPolyline =
+    _alternativeRoutes[bestIndex]["polyline"];
+
+    PolylinePoints polylinePoints = PolylinePoints();
+
+    List<PointLatLng> decoded =
+    polylinePoints.decodePolyline(encodedPolyline);
+
+    List<LatLng> points =
+    decoded.map((p) => LatLng(p.latitude, p.longitude)).toList();
+
+    setState(() {
+
+      _polylines.removeWhere(
+              (p) => p.polylineId.value == "route");
+
+      _polylines.add(
+        Polyline(
+          polylineId: const PolylineId("route"),
+          points: points,
+          width: 6,
+          color: Colors.blue,
+        ),
+      );
+
+    });
+
+    print("🚦 Switched to better route");
+  }
 // ================= FIT ROUTE =================
 
-    void _fitRouteToScreen(List<LatLng> points) {
-      if (_mapController == null || points.isEmpty) return;
+  void _fitRouteToScreen(List<LatLng> points) {
+    if (_mapController == null || points.isEmpty) return;
 
-      double minLat = points.first.latitude;
-      double maxLat = points.first.latitude;
-      double minLng = points.first.longitude;
-      double maxLng = points.first.longitude;
+    double minLat = points.first.latitude;
+    double maxLat = points.first.latitude;
+    double minLng = points.first.longitude;
+    double maxLng = points.first.longitude;
 
-      for (var p in points) {
-        if (p.latitude < minLat) minLat = p.latitude;
-        if (p.latitude > maxLat) maxLat = p.latitude;
-        if (p.longitude < minLng) minLng = p.longitude;
-        if (p.longitude > maxLng) maxLng = p.longitude;
-      }
-
-      LatLngBounds bounds = LatLngBounds(
-        southwest: LatLng(minLat, minLng),
-        northeast: LatLng(maxLat, maxLng),
-      );
-
-      _mapController?.animateCamera(
-        CameraUpdate.newLatLngBounds(bounds, 80),
-      );
+    for (var p in points) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
     }
 
-    int _calculateAnimationDelay() {
+    LatLngBounds bounds = LatLngBounds(
+      southwest: LatLng(minLat, minLng),
+      northeast: LatLng(maxLat, maxLng),
+    );
 
-      double speed = _currentSpeed.clamp(1, 15);
+    _mapController?.animateCamera(
+      CameraUpdate.newLatLngBounds(bounds, 80),
+    );
+  }
 
-      int delay = (80 - (speed * 3)).toInt();
+  int _calculateAnimationDelay() {
 
-      return delay.clamp(25, 120);
-    }
+    double speed = _currentSpeed.clamp(1, 15);
 
-    LatLng _interpolate(LatLng a, LatLng b, double t) {
-      return LatLng(
-        a.latitude + (b.latitude - a.latitude) * t,
-        a.longitude + (b.longitude - a.longitude) * t,
-      );
-    }
+    int delay = (80 - (speed * 3)).toInt();
+
+    return delay.clamp(25, 120);
+  }
+
+  LatLng _interpolate(LatLng a, LatLng b, double t) {
+    return LatLng(
+      a.latitude + (b.latitude - a.latitude) * t,
+      a.longitude + (b.longitude - a.longitude) * t,
+    );
+  }
 
 // ================= DISPOSE =================
 
-    @override
-    void dispose() {
-      _gpsSubscription?.cancel();
-      _polylineListener?.cancel();
-      _etaTimer?.cancel();
-      _cameraTimer?.cancel();
-      _mapController?.dispose();
-      super.dispose();
-    }
+  @override
+  void dispose() {
+    _gpsSubscription?.cancel();
+    _polylineListener?.cancel();
+    _altRoutesListener?.cancel();
+    _etaTimer?.cancel();
+    _cameraTimer?.cancel();
+    _publishTimer?.cancel();
+    _mapController?.dispose();
+    super.dispose();
+  }
 
 // ================= UI =================
 
-    @override
-    Widget build(BuildContext context) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text("Driver Navigation"),
-        ),
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Driver Navigation"),
+      ),
 
-        body: Stack(
-          children: [
+      body: Stack(
+        children: [
 
-            // 🚍 DRIVER NEXT STOP PANEL
+          // 🚍 DRIVER NEXT STOP PANEL
 
-            // 🔥 TURN BY TURN CARD
-            if (_nextInstruction != null)
-              Positioned(
-                top: 90,
-                left: 20,
-                right: 20,
-                child: Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 8,
-                      )
-                    ],
-                  ),
-                  child: Row(
-                    children: [
-
-                      Icon(
-                        _navIcon,
-                        size: 32,
-                        color: Colors.blue,
-                      ),
-
-                      const SizedBox(width: 12),
-
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-
-                            Text(
-                              _nextInstruction!,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
-
-                            Text(
-                              _remainingMeters != null
-                                  ? "in ${_remainingMeters!.toInt()} m"
-                                  : "in $_instructionDistance",
-                              style: const TextStyle(
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
+          // 🔥 TURN BY TURN CARD
+          if (_nextInstruction != null)
             Positioned(
-              bottom: 120,
+              top: 90,
+              left: 20,
               right: 20,
-              child: FloatingActionButton(
-                backgroundColor:
-                _followBus ? Colors.blue : Colors.grey,
-                onPressed: () {
-                  setState(() {
-                    _followBus = !_followBus;
-                  });
-                },
-                child: Icon(
-                  _followBus
-                      ? Icons.navigation
-                      : Icons.navigation_outlined,
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 8,
+                    )
+                  ],
+                ),
+                child: Row(
+                  children: [
+
+                    Icon(
+                      _navIcon,
+                      size: 32,
+                      color: Colors.blue,
+                    ),
+
+                    const SizedBox(width: 12),
+
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+
+                          Text(
+                            _nextInstruction!,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+
+                          Text(
+                            _remainingMeters != null
+                                ? "in ${_remainingMeters!.toInt()} m"
+                                : "in $_instructionDistance",
+                            style: const TextStyle(
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
 
-
-            // 🗺️ GOOGLE MAP
-            GoogleMap(
-              initialCameraPosition: const CameraPosition(
-                target: LatLng(13.0827, 80.2707),
-                zoom: 14,
+          Positioned(
+            bottom: 120,
+            right: 20,
+            child: FloatingActionButton(
+              backgroundColor:
+              _followBus ? Colors.blue : Colors.grey,
+              onPressed: () {
+                setState(() {
+                  _followBus = !_followBus;
+                });
+              },
+              child: Icon(
+                _followBus
+                    ? Icons.navigation
+                    : Icons.navigation_outlined,
               ),
-              onMapCreated: (controller) async {
-                _mapController = controller;
-                await _fetchRouteStops();   // ✅ ONLY HERE
-                _fetchDriverETA();  // ✅ trigger first ETA after stops loaded
-              },
-              myLocationEnabled: false,
-              myLocationButtonEnabled: false,
-              markers: {
-                if (_busMarker != null) _busMarker!,
-                ..._stopMarkers,
-              },
-              polylines: _polylines,
             ),
+          ),
 
-            // 🚍 DRIVER NEXT STOP PANEL
-            if (_nextStopName != null)
-              Positioned(
-                bottom: 20,
-                left: 20,
-                right: 20,
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.black87,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 10,
-                        offset: Offset(0, 4),
-                      )
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
 
-                      const Text(
-                        "NEXT STOP",
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 12,
-                          letterSpacing: 1.2,
-                        ),
+          // 🗺️ GOOGLE MAP
+          GoogleMap(
+            initialCameraPosition: const CameraPosition(
+              target: LatLng(13.0827, 80.2707),
+              zoom: 14,
+            ),
+            onMapCreated: (controller) async {
+              _mapController = controller;
+              await _fetchRouteStops();   // ✅ ONLY HERE
+              _fetchDriverETA();  // ✅ trigger first ETA after stops loaded
+            },
+            myLocationEnabled: false,
+            myLocationButtonEnabled: false,
+            markers: {
+              if (_busMarker != null) _busMarker!,
+              ..._stopMarkers,
+            },
+            polylines: _polylines,
+          ),
+
+          // 🚍 DRIVER NEXT STOP PANEL
+          if (_nextStopName != null)
+            Positioned(
+              bottom: 20,
+              left: 20,
+              right: 20,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 10,
+                      offset: Offset(0, 4),
+                    )
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+
+                    const Text(
+                      "NEXT STOP",
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        letterSpacing: 1.2,
                       ),
+                    ),
 
+                    const SizedBox(height: 6),
+
+                    Text(
+                      _nextStopName!,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+
+
+                    if (_etaMinutes != null) ...[
                       const SizedBox(height: 6),
-
                       Text(
-                        _nextStopName!,
+                        "ETA ${_etaMinutes!.toInt()} mins",
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
                         ),
                       ),
-
-
-                      if (_etaMinutes != null) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          "ETA ${_etaMinutes!.toInt()} mins",
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
                     ],
-                  ),
+                  ],
                 ),
               ),
-          ],
-        ),
-      );
-    }
+            ),
+        ],
+      ),
+    );
+  }
 }

@@ -41,16 +41,20 @@ class _StudentHomePageState extends State<StudentHomePage>
   int unreadCount = 0;
   StreamSubscription? _notificationListener;
   LatLng? _busLocation;
+  bool _busActive = false;
+  LatLng _studentLocation = const LatLng(13.0827, 80.2707);
   Set<Marker> _miniMarkers = {};
   Set<Polyline> _miniPolylines = {};
   GoogleMapController? _miniMapController;
+  List<LatLng> _routePoints = [];
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
   late Animation<Offset> _slideAnim;
   @override
   void initState() {
     super.initState();
-    _initLocationPermission();  // 👈 ADD THIS
+    _initLocationPermission();
+    _getStudentLocation();  // 👈 ADD THIS
     _animController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 700),
@@ -86,10 +90,10 @@ class _StudentHomePageState extends State<StudentHomePage>
     //  Load student info into state
     await _loadStudentInfo();
 
-
-    // Request notification permission
     await _requestPermission();
-
+    if (busId != null) {
+      await _loadRoutePolyline(busId!);
+    }
     // Attach listeners
     _listenForMessages();
     _listenToNotifications();
@@ -111,6 +115,81 @@ class _StudentHomePageState extends State<StudentHomePage>
       }
     } catch (e) {
       print("Location permission error: $e");
+    }
+  }
+  Future<void> _loadRoutePolyline(String busId) async {
+
+    final snapshot = await FirebaseDatabase.instance
+        .ref("routes/$busId/polyline")
+        .get();
+
+    if (!snapshot.exists) return;
+
+    final data = snapshot.value as List;
+
+    List<LatLng> points = [];
+
+    for (var p in data) {
+      points.add(
+        LatLng(
+          p["lat"].toDouble(),
+          p["lng"].toDouble(),
+        ),
+      );
+    }
+
+    setState(() {
+      _routePoints = points;
+
+      _miniPolylines = {
+        Polyline(
+          polylineId: const PolylineId("route"),
+          points: _routePoints,
+          width: 5,
+          color: Colors.blue,
+        )
+      };
+    });
+  }
+
+  Future<void> _getStudentLocation() async {
+    try {
+
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print("Location service disabled");
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        print("Location permission denied");
+        return;
+      }
+
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _studentLocation = LatLng(
+          position.latitude,
+          position.longitude,
+        );
+      });
+
+      print("📍 Student location: $_studentLocation");
+
+    } catch (e) {
+      print("Student location error: $e");
     }
   }
 
@@ -276,7 +355,7 @@ class _StudentHomePageState extends State<StudentHomePage>
     });
   }
 
-// ✅ LOGOUT FUNCTION
+  // ✅ LOGOUT FUNCTION
   void _logout() {
     showDialog(
       context: context,
@@ -328,7 +407,7 @@ class _StudentHomePageState extends State<StudentHomePage>
       ),
     );
   }
-//=================Temporary Bus Change Listener==================
+  //=================Temporary Bus Change Listener==================
   Future<void> _listenToTemporaryBus() async {
     final prefs = await SharedPreferences.getInstance();
     final String? originalBusId = prefs.getString("busId");
@@ -409,12 +488,15 @@ class _StudentHomePageState extends State<StudentHomePage>
     });
   }
   Future<void> _listenToBus() async {
+
     final prefs = await SharedPreferences.getInstance();
 
     String? originalBus = prefs.getString("busId");
     String? currentBus = tempBus ?? originalBus;
 
     if (currentBus == null) return;
+
+    await _loadRoutePolyline(currentBus);
 
     _busListener?.cancel();
 
@@ -423,9 +505,26 @@ class _StudentHomePageState extends State<StudentHomePage>
         .onValue
         .listen((event) {
 
+      if (!mounted) return;
+
       final data = event.snapshot.value;
 
-      if (data == null) return;
+      // 🛑 Trip ended
+      if (data == null) {
+
+        setState(() {
+          _busLocation = null;
+          _busActive = false;
+
+          _miniMarkers.removeWhere(
+                (m) => m.markerId.value == "bus",
+          );
+        });
+
+        print("🟡 Bus not started / trip ended");
+
+        return;
+      }
 
       final map = Map<String, dynamic>.from(data as Map);
 
@@ -438,29 +537,27 @@ class _StudentHomePageState extends State<StudentHomePage>
 
       setState(() {
         _busLocation = busPos;
+        _busActive = true;   // ⭐ IMPORTANT
 
         _miniMarkers = {
           Marker(
             markerId: const MarkerId("bus"),
             position: busPos,
             icon: BitmapDescriptor.defaultMarkerWithHue(
-                BitmapDescriptor.hueAzure),
-          )
+              BitmapDescriptor.hueAzure,
+            ),
+          ),
+          Marker(
+            markerId: const MarkerId("student"),
+            position: _studentLocation,
+            icon: BitmapDescriptor.defaultMarkerWithHue(
+              BitmapDescriptor.hueBlue,
+            ),
+          ),
         };
+      });;
 
-        _miniPolylines = {
-          Polyline(
-            polylineId: const PolylineId("route"),
-            points: [
-              const LatLng(13.0827, 80.2707),
-              busPos
-            ],
-            color: Colors.blue,
-            width: 4,
-          )
-        };
-      });
-
+      // 🎥 Move camera to bus
       if (_miniMapController != null) {
         _miniMapController!.animateCamera(
           CameraUpdate.newCameraPosition(
@@ -476,9 +573,8 @@ class _StudentHomePageState extends State<StudentHomePage>
   //ISSUE REPORTING BY BUS ALERT
   Future<void> _listenToBusIssues() async {
     final prefs = await SharedPreferences.getInstance();
-
-    final originalBus = prefs.getString("busId");
-    final currentBus = tempBus ?? originalBus;
+    String? originalBus = prefs.getString("busId");
+    String? currentBus = tempBus ?? originalBus;
 
     if (currentBus == null) return;
 
@@ -769,7 +865,9 @@ class _StudentHomePageState extends State<StudentHomePage>
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                _etaMinutes == null
+                                !_busActive
+                                    ? "🟡 Bus has not started yet"
+                                    : _etaMinutes == null
                                     ? "Calculating..."
                                     : _etaMinutes == 0
                                     ? "🟢 Bus has arrived!"
@@ -873,7 +971,7 @@ class _StudentHomePageState extends State<StudentHomePage>
                                     height: 170,
                                     child:GoogleMap(
                                       initialCameraPosition: CameraPosition(
-                                        target: _busLocation ?? const LatLng(13.0827, 80.2707),
+                                        target: _busLocation ?? _studentLocation,
                                         zoom: 14,
                                       ),
                                       onMapCreated: (controller) {
