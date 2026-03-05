@@ -8,7 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'dart:math';
-const String googleKey = "";
+const String googleKey = "AIzaSyAeAYcObFrWvXkt3HEGutI7W6Pp7MOWv2k";
 
 class KalmanLatLng {
   double q = 0.00001;
@@ -86,6 +86,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
   LatLng? _currentStepTarget;
 
   Timer? _etaTimer;
+  Timer? _publishTimer;
   BitmapDescriptor? _busIcon;
   Set<Marker> _stopMarkers = {};
   Marker? _busMarker;
@@ -151,8 +152,8 @@ class _DriverMapPageState extends State<DriverMapPage> {
   }
 
 // ================= BUS SMOOTH ANIMATION =================
-
   Future<void> _animateBus(LatLng newPosition) async {
+
     if (_driverLocation == null) {
       _driverLocation = newPosition;
 
@@ -161,23 +162,26 @@ class _DriverMapPageState extends State<DriverMapPage> {
           _updateDriverMarker();
         });
       }
-
       return;
     }
-    const int steps = 5; // smoother animation
 
-    double latStep =
-        (newPosition.latitude - _driverLocation!.latitude) / steps;
-
-    double lngStep =
-        (newPosition.longitude - _driverLocation!.longitude) / steps;
+    const int steps = 4;
 
     for (int i = 0; i < steps; i++) {
-      await Future.delayed(const Duration(milliseconds: 70));
+
+      await Future.delayed(
+        Duration(milliseconds: _calculateAnimationDelay()),
+      );
+
+      if (_driverLocation == null) return;
+
+      LatLng predicted = _predictNextPosition(newPosition);
 
       _driverLocation = LatLng(
-        _driverLocation!.latitude + latStep,
-        _driverLocation!.longitude + lngStep,
+        _driverLocation!.latitude +
+            (predicted.latitude - _driverLocation!.latitude) * 0.3,
+        _driverLocation!.longitude +
+            (predicted.longitude - _driverLocation!.longitude) * 0.3,
       );
 
       if (!mounted) return;
@@ -187,16 +191,13 @@ class _DriverMapPageState extends State<DriverMapPage> {
       });
     }
   }
-
-// ================= GPS STREAM =================
-
   StreamSubscription<Position>? _gpsSubscription;
 
-  Timer? _publishTimer;
+  Future<void> _startDriverGPS() async {
 
-  Future<void>  _startDriverGPS() async {
     await _gpsSubscription?.cancel();
     _gpsSubscription = null;
+
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       print("GPS disabled");
@@ -215,124 +216,58 @@ class _DriverMapPageState extends State<DriverMapPage> {
       return;
     }
 
-    Geolocator.getPositionStream(
+    _gpsSubscription = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: 0,
       ),
-    ).listen((position) async {
+    ).listen(
+          (position) async {
 
-      // 📍 Raw GPS
-      final rawPoint = LatLng(position.latitude, position.longitude);
+        try {
 
-// filtered for UI only
-      LatLng filteredPoint =
-      _snapToRoute(_gpsKalman.process(rawPoint));
+          final rawPoint = LatLng(position.latitude, position.longitude);
 
-// real GPS stored separately
-      _driverLocation = filteredPoint;
-      _realGpsLocation = rawPoint;
+          // ignore small GPS drift when stopped
+          if (_driverLocation != null && position.speed < 0.5) {
+            double drift = Geolocator.distanceBetween(
+              _driverLocation!.latitude,
+              _driverLocation!.longitude,
+              rawPoint.latitude,
+              rawPoint.longitude,
+            );
 
-      // ================= ROUTE DEVIATION DETECTION =================
-
-      if (_routePoints.isNotEmpty) {
-
-        double minDistance = double.infinity;
-
-        for (LatLng p in _routePoints) {
-
-          double d = Geolocator.distanceBetween(
-            filteredPoint.latitude,
-            filteredPoint.longitude,
-            p.latitude,
-            p.longitude,
-          );
-
-          if (d < minDistance) {
-            minDistance = d;
+            if (drift < 3) return;
           }
-        }
 
-        // 🚨 Driver left route
-        if (minDistance > 60) {
+          LatLng filteredPoint =
+          _snapToRoute(_gpsKalman.process(rawPoint));
 
-          if (_lastDynamicRouteTime == null ||
-              DateTime.now().difference(_lastDynamicRouteTime!) >
-                  const Duration(seconds: 10)) {
+          _realGpsLocation = rawPoint;
 
-            print("⚠ Driver deviated from route");
+          await _animateBus(filteredPoint);
 
-            _lastDynamicRouteTime = DateTime.now();
+          double newHeading = position.heading;
 
-            _generateDynamicRoute();
+          if (!newHeading.isNaN && newHeading >= 0) {
+            _driverBearing =
+                _driverBearing + (newHeading - _driverBearing) * 0.2;
           }
+
+          _currentSpeed = position.speed;
+          if (_currentSpeed < 0.3) {
+            _currentSpeed = 0;
+          }
+
+        } catch (e) {
+          print("GPS processing error: $e");
         }
-      }
+      },
 
-      // 🚍 Smooth animation
-      await _animateBus(filteredPoint);
-
-      // 🧭 Heading update
-      double newHeading = position.heading;
-
-      if (!newHeading.isNaN && newHeading >= 0) {
-        _driverBearing =
-            _driverBearing + (newHeading - _driverBearing) * 0.2;
-      }
-
-      // 🚀 Speed update
-      _currentSpeed = position.speed;
-      if (_currentSpeed < 0.3) {
-        _currentSpeed = 0;
-      }
-      // 🎯 First GPS fix → move camera
-      if (!_firstLocationFix && _mapController != null) {
-
-        _firstLocationFix = true;
-
-        _mapController!.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(
-              target: filteredPoint,
-              zoom: 17,
-              tilt: 45,
-            ),
-          ),
-        );
-      }
-
-      // Update navigation polyline only when bus moved enough
-      if (_lastRouteUpdate == null ||
-          Geolocator.distanceBetween(
-            _lastRouteUpdate!.latitude,
-            _lastRouteUpdate!.longitude,
-            _driverLocation!.latitude,
-            _driverLocation!.longitude,
-          ) > 40) {
-
-        if (_lastDynamicRouteTime == null ||
-            DateTime.now().difference(_lastDynamicRouteTime!) >
-                const Duration(seconds: 10)) {
-
-          _lastRouteUpdate = _driverLocation;
-          _lastDynamicRouteTime = DateTime.now();
-
-          _generateDynamicRoute();
-        }
-      }
-
-      // 🛑 Stop arrival detection
-      _checkStopArrival();
-
-      // 📏 Navigation distance update
-      _updateStepDistance();
-
-      // 🎥 Navigation camera follow
-      if (_followBus && _driverLocation != null) {
-        _startNavigationCamera(_driverLocation!);
-      }
-
-    });
+      onError: (error) {
+        print("GPS stream error: $error");
+      },
+    );
   }
   void _updateNavigationInstruction() {
     if (_navSteps.isEmpty) return;
@@ -392,20 +327,23 @@ class _DriverMapPageState extends State<DriverMapPage> {
   void _startNavigationCamera(LatLng busPos) {
     if (!_followBus || _mapController == null) return;
 
-    _cameraTimer?.cancel();
+    if (_cameraTimer != null) return;
 
     _cameraTimer =
-        Timer.periodic(const Duration(milliseconds: 120), (timer) {
+        Timer.periodic(const Duration(milliseconds: 250), (timer) {
+
+          if (_driverLocation == null) return;
+
           LatLng lookAhead =
-          _projectForward(busPos, _driverBearing, _lookAheadDistance);
+          _projectForward(_driverLocation!, _driverBearing, _lookAheadDistance);
 
           _cameraPosition ??= lookAhead;
 
           double lat = _cameraPosition!.latitude +
-              (lookAhead.latitude - _cameraPosition!.latitude) * 0.08;
+              (lookAhead.latitude - _cameraPosition!.latitude) * 0.15;
 
           double lng = _cameraPosition!.longitude +
-              (lookAhead.longitude - _cameraPosition!.longitude) * 0.08;
+              (lookAhead.longitude - _cameraPosition!.longitude) * 0.15;
 
           _cameraPosition = LatLng(lat, lng);
 
@@ -451,6 +389,18 @@ class _DriverMapPageState extends State<DriverMapPage> {
     return LatLng(lat2 * 180 / pi, lon2 * 180 / pi);
   }
 
+  LatLng _predictNextPosition(LatLng current) {
+
+    if (_currentSpeed < 1) return current;
+
+    double distance = _currentSpeed * 1.2;
+
+    return _projectForward(
+      current,
+      _driverBearing,
+      distance,
+    );
+  }
 // ================= DRIVER ETA =================
   Future<void> _fetchDriverETA() async {
     print("==== DRIVER ETA START ====");
@@ -531,14 +481,24 @@ class _DriverMapPageState extends State<DriverMapPage> {
         final duration = data["durationValue"];
 
         if (duration != null && duration is num) {
-          _etaMinutes = duration.toDouble() / 60.0;
+
+          double eta = duration.toDouble() / 60.0;
+
+          // adjust ETA using current bus speed
+          if (_currentSpeed < 2) {
+            eta *= 1.4;
+          } else if (_currentSpeed < 5) {
+            eta *= 1.2;
+          }
+
+          _etaMinutes = eta;
+
         } else {
           _etaMinutes = null;
         }
 
         _nextStopName = data["nextStop"];
       });
-
       await _fetchRouteStops(); // 🔥 refresh stop markers
 
     } catch (e) {
@@ -738,8 +698,11 @@ class _DriverMapPageState extends State<DriverMapPage> {
   Future<void> _publishDriverLocation() async {
     if (busId == null || _realGpsLocation == null) return;
 
-    if (_driverLocation!.latitude == 0 || _driverLocation!.longitude == 0) return;
+    if (_driverLocation == null) return;
 
+    if (_driverLocation!.latitude == 0 || _driverLocation!.longitude == 0) {
+      return;
+    }
     await _busRef.child("buses/$busId/current").update({
       "lat": _realGpsLocation!.latitude,
       "lng": _realGpsLocation!.longitude,
@@ -828,9 +791,11 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
     final response = await ApiService.getExternal(url);
 
+    if (response.statusCode != 200) return;
+
     final data = jsonDecode(response.body);
 
-    if (data["routes"].isEmpty) return;
+    if (data["routes"] == null || data["routes"].isEmpty) return;
 
     String encoded = data["routes"][0]["overview_polyline"]["points"];
 
@@ -862,15 +827,18 @@ class _DriverMapPageState extends State<DriverMapPage> {
     if (busId == null) return;
 
     _polylineListener?.cancel();
+
     _polylineListener = FirebaseDatabase.instance
         .ref("busRoutes/$busId/fullRoadPolyline")
         .onValue
         .listen((event) {
+
       final data = event.snapshot.value;
 
       if (data == null) return;
 
       String encodedPolyline = data.toString();
+      if (encodedPolyline.isEmpty) return;
 
       PolylinePoints polylinePoints = PolylinePoints();
 
@@ -880,23 +848,26 @@ class _DriverMapPageState extends State<DriverMapPage> {
       List<LatLng> points =
       decoded.map((p) => LatLng(p.latitude, p.longitude)).toList();
 
-      if (_routePoints.length != points.length) {
-        setState(() {
-          _routePoints = points;
+      setState(() {
+        _routePoints = points;
 
-          _polylines = {
-            Polyline(
-              polylineId: const PolylineId("route"),
-              points: points,
-              width: 6,
-              color: Colors.blue,
-            ),
-          };
-        });
+        _polylines.removeWhere(
+              (p) => p.polylineId.value == "route",
+        );
 
-        print("Polyline data = $data");
-        print("Decoded count = ${decoded.length}");
-      }
+        _polylines.add(
+          Polyline(
+            polylineId: const PolylineId("route"),
+            points: points,
+            width: 6,
+            color: Colors.blue,
+          ),
+        );
+      });
+
+      print("Polyline data = $data");
+      print("Decoded count = ${decoded.length}");
+
     });
   }
   Future<void> _listenAlternativeRoutes() async {
@@ -914,8 +885,9 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
       if (data == null) return;
 
-      final routes = List.from(data as List);
+      if (data is! List) return;
 
+      final routes = List.from(data);
       _alternativeRoutes = routes;
 
       print("🚍 Alternative routes loaded: ${routes.length}");
