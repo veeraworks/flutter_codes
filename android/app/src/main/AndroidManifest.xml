@@ -14,6 +14,7 @@
     <!-- FOREGROUND SERVICE -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <!-- ANDROID 13+ NOTIFICATIONS -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
@@ -58,8 +59,8 @@
         <service
             android:name="id.flutter.flutter_background_service.BackgroundService"
             android:foregroundServiceType="location"
-            android:exported="true"
-            tools:replace="android:exported"/>
+            android:enabled="true"
+            android:exported="false"/>
 
         <!-- FLUTTER EMBEDDING -->
         <meta-data

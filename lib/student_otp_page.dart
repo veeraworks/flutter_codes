@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'service/api_service.dart';
@@ -25,11 +24,12 @@ class StudentOtpPage extends StatefulWidget {
 }
 
 class _StudentOtpPageState extends State<StudentOtpPage> {
-  final TextEditingController otpController = TextEditingController();
 
+  final TextEditingController otpController = TextEditingController();
   bool isLoading = false;
 
   Future<void> _submitOtp() async {
+
     if (otpController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Enter OTP")),
@@ -41,19 +41,13 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
 
     try {
 
-      // ✅ DEV MODE — allow any OTP
-      if (otpController.text.trim().isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Enter OTP")),
-        );
-        setState(() => isLoading = false);
-        return;
-      }
-      // 🔥 STEP 2: Call backend
+      /// 🔥 DEV MODE → Skip Firebase OTP check
+      /// Any OTP will work while testing
+
       final response = await ApiService.post(
         widget.isSignup
-            ? "/students/complete-signup"
-            : "/students/check-student",
+            ? "/auth/students/complete-signup"
+            : "/auth/verify-user",
         {
           "regNo": widget.regNo,
           "phone": widget.phoneNumber,
@@ -66,13 +60,22 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
 
       final data = jsonDecode(response.body);
 
-      if (data["student"] == null) {
+      Map<String, dynamic>? student;
+
+      if (widget.isSignup) {
+        student = data["student"];
+      } else {
+        if (data["role"] != "STUDENT") {
+          throw Exception("Invalid role");
+        }
+        student = data["student"];
+      }
+
+      if (student == null) {
         throw Exception("Student not found");
       }
 
-      final student = data["student"];
-
-      // 💾 STEP 3: Save session
+      /// 💾 SAVE LOGIN SESSION
       final prefs = await SharedPreferences.getInstance();
 
       await prefs.setBool("isLoggedIn", true);
@@ -83,7 +86,7 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
       await prefs.setString("routeName", student["busName"] ?? "");
       await prefs.setString("boardingPoint", student["boardingPoint"] ?? "");
 
-      // 🔔 Subscribe to bus topic
+      /// 🔔 Subscribe to bus notification topic
       if (student["busId"] != null) {
         await FirebaseMessaging.instance
             .subscribeToTopic(student["busId"].toString().toLowerCase());
@@ -97,16 +100,18 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
             (route) => false,
       );
 
-    } on FirebaseAuthException {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Invalid OTP")),
-      );
     } catch (e) {
+
+      print("OTP LOGIN ERROR: $e");
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Login failed")),
       );
+
     } finally {
+
       if (mounted) setState(() => isLoading = false);
+
     }
   }
 
@@ -118,8 +123,10 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
 
   @override
   Widget build(BuildContext context) {
+
     return Scaffold(
       backgroundColor: Colors.white,
+
       appBar: AppBar(
         backgroundColor: Colors.teal,
         title: const Text(
@@ -128,11 +135,14 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
         ),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
+
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24),
+
           child: Container(
             padding: const EdgeInsets.all(24),
+
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(20),
@@ -144,16 +154,20 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
                 ),
               ],
             ),
+
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+
                 CircleAvatar(
                   radius: 38,
                   backgroundColor: Colors.teal.withOpacity(0.15),
                   child: const Icon(Icons.lock,
                       color: Colors.teal, size: 36),
                 ),
+
                 const SizedBox(height: 20),
+
                 const Text(
                   "ENTER OTP",
                   style: TextStyle(
@@ -162,12 +176,16 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
                     color: Colors.teal,
                   ),
                 ),
+
                 const SizedBox(height: 8),
+
                 Text(
                   "OTP sent to +91 ${widget.phoneNumber}",
                   style: const TextStyle(color: Colors.grey),
                 ),
+
                 const SizedBox(height: 24),
+
                 TextField(
                   controller: otpController,
                   keyboardType: TextInputType.number,
@@ -176,24 +194,27 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
                         color: Colors.teal),
                     hintText: "Enter OTP",
                     border: OutlineInputBorder(
-                      borderRadius:
-                      BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                 ),
+
                 const SizedBox(height: 28),
+
                 SizedBox(
                   width: double.infinity,
                   height: 52,
+
                   child: ElevatedButton(
                     onPressed: isLoading ? null : _submitOtp,
+
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.teal,
                       shape: RoundedRectangleBorder(
-                        borderRadius:
-                        BorderRadius.circular(30),
+                        borderRadius: BorderRadius.circular(30),
                       ),
                     ),
+
                     child: isLoading
                         ? const CircularProgressIndicator(
                         color: Colors.white)
