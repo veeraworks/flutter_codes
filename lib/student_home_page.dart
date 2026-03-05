@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:project_spt/student_map_page.dart';
 import 'settings_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'main.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -40,6 +40,10 @@ class _StudentHomePageState extends State<StudentHomePage>
   bool _locationPermissionGranted = false;
   int unreadCount = 0;
   StreamSubscription? _notificationListener;
+  LatLng? _busLocation;
+  Set<Marker> _miniMarkers = {};
+  Set<Polyline> _miniPolylines = {};
+  GoogleMapController? _miniMapController;
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
   late Animation<Offset> _slideAnim;
@@ -69,7 +73,9 @@ class _StudentHomePageState extends State<StudentHomePage>
 
     _animController.forward();
     _loadActiveIssue();
-    _initializeStudent();
+    Future.delayed(const Duration(milliseconds: 300), () {
+      _initializeStudent();
+    });
   }
 
   Future<void> _initializeStudent() async {
@@ -419,17 +425,54 @@ class _StudentHomePageState extends State<StudentHomePage>
 
       final data = event.snapshot.value;
 
-      if (data == null) {
-        setState(() {
-          _etaMinutes = null;
-        });
-        return;
-      }
+      if (data == null) return;
 
+      final map = Map<String, dynamic>.from(data as Map);
+
+      double? lat = map["lat"];
+      double? lng = map["lng"];
+
+      if (lat == null || lng == null) return;
+
+      LatLng busPos = LatLng(lat, lng);
+
+      setState(() {
+        _busLocation = busPos;
+
+        _miniMarkers = {
+          Marker(
+            markerId: const MarkerId("bus"),
+            position: busPos,
+            icon: BitmapDescriptor.defaultMarkerWithHue(
+                BitmapDescriptor.hueAzure),
+          )
+        };
+
+        _miniPolylines = {
+          Polyline(
+            polylineId: const PolylineId("route"),
+            points: [
+              const LatLng(13.0827, 80.2707),
+              busPos
+            ],
+            color: Colors.blue,
+            width: 4,
+          )
+        };
+      });
+
+      if (_miniMapController != null) {
+        _miniMapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: busPos,
+              zoom: 15,
+            ),
+          ),
+        );
+      }
     });
   }
-
-
   //ISSUE REPORTING BY BUS ALERT
   Future<void> _listenToBusIssues() async {
     final prefs = await SharedPreferences.getInstance();
@@ -516,10 +559,27 @@ class _StudentHomePageState extends State<StudentHomePage>
               ),
             ),
 
-            _drawerItem(Icons.map, "View Map", () {
-              Navigator.push(
+            _drawerItem(Icons.map, "View Map", () async {
+
+              final prefs = await SharedPreferences.getInstance();
+              String? busId = prefs.getString("busId");
+
+              if (busId == null || busId.isEmpty) {
+                if (!mounted) return;
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Bus not assigned yet")),
+                );
+                return;
+              }
+
+              if (!mounted) return;
+
+              await Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const MapPage()),
+                MaterialPageRoute(
+                  builder: (_) => const MapPage(),
+                ),
               );
             }),
 
@@ -811,24 +871,31 @@ class _StudentHomePageState extends State<StudentHomePage>
                                   ),
                                   child: SizedBox(
                                     height: 170,
-                                    child: GoogleMap(
+                                    child:GoogleMap(
                                       initialCameraPosition: CameraPosition(
-                                        target: LatLng(13.0827, 80.2707),
-                                        zoom: 13,
+                                        target: _busLocation ?? const LatLng(13.0827, 80.2707),
+                                        zoom: 14,
                                       ),
+                                      onMapCreated: (controller) {
+                                        _miniMapController = controller;
+                                      },
+                                      markers: _miniMarkers,
+                                      polylines: _miniPolylines,
                                       zoomControlsEnabled: false,
                                       myLocationEnabled: _locationPermissionGranted,
                                       myLocationButtonEnabled: _locationPermissionGranted,
+                                      compassEnabled: false,
+                                      mapToolbarEnabled: false,
+                                      tiltGesturesEnabled: false,
+                                      rotateGesturesEnabled: false,
+                                      scrollGesturesEnabled: false,
+                                      zoomGesturesEnabled: false,
                                     ),
                                   ),
                                 ),
 
-                                /// 🔵 OPEN MAP BUTTON (ANIMATED)
+                                /// 🔵 OPEN MAP BUTTON
                                 InkWell(
-                                  borderRadius: const BorderRadius.only(
-                                    bottomLeft: Radius.circular(16),
-                                    bottomRight: Radius.circular(16),
-                                  ),
                                   onTap: () {
                                     Navigator.push(
                                       context,
@@ -837,8 +904,9 @@ class _StudentHomePageState extends State<StudentHomePage>
                                       ),
                                     );
                                   },
-                                  child: Ink(
+                                  child: Container(
                                     width: double.infinity,
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
                                     decoration: const BoxDecoration(
                                       color: Color(0xFF3E64FF),
                                       borderRadius: BorderRadius.only(
@@ -846,16 +914,13 @@ class _StudentHomePageState extends State<StudentHomePage>
                                         bottomRight: Radius.circular(16),
                                       ),
                                     ),
-                                    child: const Padding(
-                                      padding: EdgeInsets.symmetric(vertical: 14),
-                                      child: Center(
-                                        child: Text(
-                                          'Open Map',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w600,
-                                          ),
+                                    child: const Center(
+                                      child: Text(
+                                        "Open Map",
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
                                         ),
                                       ),
                                     ),
@@ -863,7 +928,7 @@ class _StudentHomePageState extends State<StudentHomePage>
                                 ),
                               ],
                             ),
-                          ),
+                          )
                         ],
                       ),
                     ),
@@ -943,13 +1008,12 @@ class _StudentHomePageState extends State<StudentHomePage>
 
   Widget _drawerItem(IconData icon, String title, VoidCallback onTap) {
     return ListTile(
-      leading: Icon(icon, color: const Color(0xFF00BFA6)),
-      title: Text(title, style: const TextStyle(fontSize: 16)),
+      leading: Icon(icon),
+      title: Text(title),
       onTap: onTap,
     );
   }
 }
-
 /* ================= NOTIFICATIONS PAGE ================= */
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});

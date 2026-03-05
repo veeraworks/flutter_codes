@@ -20,6 +20,32 @@ class MapPage extends StatefulWidget {
 
 class _MapPageState extends State<MapPage> {
   GoogleMapController? _mapController;
+  List<LatLng> _getRemainingRoute() {
+
+    if (_busLocation == null || _routePoints.isEmpty) {
+      return _routePoints;
+    }
+
+    int closestIndex = 0;
+    double minDistance = double.infinity;
+
+    for (int i = 0; i < _routePoints.length; i++) {
+
+      double d = Geolocator.distanceBetween(
+        _busLocation!.latitude,
+        _busLocation!.longitude,
+        _routePoints[i].latitude,
+        _routePoints[i].longitude,
+      );
+
+      if (d < minDistance) {
+        minDistance = d;
+        closestIndex = i;
+      }
+    }
+
+    return _routePoints.sublist(closestIndex);
+  }
 
   LatLng _studentLocation = const LatLng(13.0827, 80.2707);
   LatLng? _busLocation;
@@ -48,11 +74,14 @@ class _MapPageState extends State<MapPage> {
   DateTime? _lastGpsTime;
   LatLng? _lastGpsPosition;
   double _busSpeedMps = 0; // meters per second
+  double? _distanceToBus;
   bool _gpsJustUpdated = false;
   Timer? _rotationTimer;
 
   double _currentRotation = 0;
   double _targetRotation = 0;
+
+  int _lastRouteIndex = -1;
 
   StreamSubscription<DatabaseEvent>? _busListener;
   StreamSubscription<DatabaseEvent>? _stopListener;
@@ -154,8 +183,8 @@ class _MapPageState extends State<MapPage> {
   }
 
   Future<void> _loadBusIcon() async {
-    _busIcon = await BitmapDescriptor.fromAssetImage(
-      const ImageConfiguration(size: Size(100, 100)),
+    _busIcon = await BitmapDescriptor.asset(
+      ImageConfiguration(size: Size(40, 40)),
       "assets/images/bus_icon_map.png",
     );
   }
@@ -180,7 +209,11 @@ class _MapPageState extends State<MapPage> {
       northeast: LatLng(maxLat, maxLng),
     );
 
-    CameraUpdate.newLatLngBounds(bounds, 80);
+    if (_mapController != null && mounted) {
+      _mapController!.animateCamera(
+        CameraUpdate.newLatLngBounds(bounds, 80),
+      );
+    }
   }
 
   double _distanceMeters(LatLng a, LatLng b) {
@@ -192,28 +225,31 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
-// ================= ROUTE ENGINE (ADD HERE) =================
+// ================= ROUTE ENGINE =================
   LatLng _snapToRoute(LatLng gpsPoint) {
     if (_routePoints.isEmpty) return gpsPoint;
 
     double minDistance = double.infinity;
-    LatLng closestPoint = gpsPoint;
+    int closestIndex = 0;
 
-    for (final p in _routePoints) {
+    int start = (_lastRouteIndex - 30).clamp(0, _routePoints.length - 1);
+    int end = (_lastRouteIndex + 30).clamp(0, _routePoints.length - 1);
+
+    for (int i = start; i <= end; i++) {
       final d = Geolocator.distanceBetween(
         gpsPoint.latitude,
         gpsPoint.longitude,
-        p.latitude,
-        p.longitude,
+        _routePoints[i].latitude,
+        _routePoints[i].longitude,
       );
 
       if (d < minDistance) {
         minDistance = d;
-        closestPoint = p;
+        closestIndex = i;
       }
     }
 
-    return closestPoint;
+    return _routePoints[closestIndex];
   }
 
   LatLng _projectPosition(LatLng start,
@@ -313,7 +349,7 @@ class _MapPageState extends State<MapPage> {
 
         // 🔷 STUDENT STOP
         else if (isStudentStop) {
-          markerHue = BitmapDescriptor.hueBlue;
+          markerHue = BitmapDescriptor.hueViolet;
         }
 
         markers.add(
@@ -336,9 +372,9 @@ class _MapPageState extends State<MapPage> {
         _stopMarkers = markers;
       });
 
-      Future.delayed(const Duration(milliseconds: 500), () {
+      if (_mapController != null) {
         _fitRouteToScreen(routePoints);
-      });
+      }
     } catch (e) {
       print("Route fetch error: $e");
     }
@@ -355,35 +391,39 @@ class _MapPageState extends State<MapPage> {
       print("No internet");
       return;
     }
+
     _busListener = FirebaseDatabase.instance
         .ref("buses/$busId/current")
         .onValue
         .listen((event) {
+
+      if (!mounted) return;
+
       final data = event.snapshot.value;
       if (data == null) return;
 
       final map = Map<String, dynamic>.from(data as Map);
 
       LatLng newPos = LatLng(
-
         (map["lat"] as num).toDouble(),
         (map["lng"] as num).toDouble(),
-
       );
+
       print("🔥 BUS REALTIME EVENT TRIGGERED");
-      // ✅ mark GPS arrival
+
+      // mark GPS update
       _gpsJustUpdated = true;
 
       final now = DateTime.now();
 
+      // ===== SPEED CALCULATION =====
       if (_lastGpsPosition != null && _lastGpsTime != null) {
+
         double distance =
         _distanceMeters(_lastGpsPosition!, newPos);
 
         double seconds =
-            now
-                .difference(_lastGpsTime!)
-                .inMilliseconds / 1000;
+            now.difference(_lastGpsTime!).inMilliseconds / 1000;
 
         if (seconds > 0) {
           _busSpeedMps = (distance / seconds).clamp(0, 15);
@@ -393,87 +433,166 @@ class _MapPageState extends State<MapPage> {
       _lastGpsPosition = newPos;
       _lastGpsTime = now;
 
+      // ===== ROTATION =====
       double bearing = (map["bearing"] ?? 0).toDouble();
       _smoothRotate(bearing);
-      // 🔥 SNAP TO ROAD
+
+      // ===== SNAP TO ROUTE =====
       final snappedPos = _snapToRoute(newPos);
-
       _busLocation = snappedPos;
+      // calculate distance from student
+      _distanceToBus = Geolocator.distanceBetween(
+        _studentLocation.latitude,
+        _studentLocation.longitude,
+        snappedPos.latitude,
+        snappedPos.longitude,
+      ) / 1000; // km
+      // show driver marker immediately
+      setState(() {
+        _busMarker = Marker(
+          markerId: const MarkerId("bus"),
+          position: snappedPos,
+          icon: _busIcon ?? BitmapDescriptor.defaultMarker,
+          rotation: _currentRotation,
+          anchor: const Offset(0.5, 0.5),
+          flat: true,
+        );
+      });
+      // 📍 move camera to bus when first GPS arrives
+      if (_mapController != null && _cameraPosition == null) {
+        _cameraPosition = snappedPos;
 
-      _startPredictiveMotion(snappedPos, bearing);
-
-      if (_roadPath.isNotEmpty) {
-        if (!(_roadAnimationTimer?.isActive ?? false)) {
-          _animateBusAlongRoad(bearing);
-        }
-      } else {
-        _animateBus(snappedPos, bearing);
+        _mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: snappedPos,
+              zoom: 17,
+              tilt: 45,
+            ),
+          ),
+        );
       }
-      _startCinematicCamera(snappedPos);
+
+      if (_routePoints.isNotEmpty && _busLocation != null) {
+
+        int closestIndex = 0;
+        double minDistance = double.infinity;
+
+        for (int i = 0; i < _routePoints.length; i++) {
+
+          double d = Geolocator.distanceBetween(
+            _busLocation!.latitude,
+            _busLocation!.longitude,
+            _routePoints[i].latitude,
+            _routePoints[i].longitude,
+          );
+
+          if (d < minDistance) {
+            minDistance = d;
+            closestIndex = i;
+          }
+        }
+
+        // update only when bus moves forward
+        if (closestIndex != _lastRouteIndex) {
+
+          _lastRouteIndex = closestIndex;
+
+          List<LatLng> remaining = _routePoints.sublist(closestIndex);
+          remaining.insert(0, _busLocation!);
+
+          setState(() {
+            _polylines = {
+              Polyline(
+                polylineId: const PolylineId("route"),
+                points: remaining,
+                width: 6,
+                color: Colors.blue,
+              ),
+            };
+          });
+
+          _startPredictiveMotion(snappedPos, bearing);
+
+          if (_roadPath.isNotEmpty) {
+            if (!(_roadAnimationTimer?.isActive ?? false)) {
+              _animateBusAlongRoad(bearing);
+            }
+          } else {
+            _animateBus(snappedPos, bearing);
+          }
+          _startCinematicCamera(snappedPos);
+        }
+      }
     });
   }
 
-  void _animateBus(LatLng newPosition, double bearing) {
-    if (_previousBusLocation == null) {
+      void _animateBus(LatLng newPosition, double bearing) {
+      if (_previousBusLocation == null) {
       _previousBusLocation = newPosition;
-    }
+      }
 
-    const duration = 1500;
-    const frame = 16;
-    int steps = duration ~/ frame;
-    int step = 0;
+      const duration = 1500;
+      const frame = 16;
+      int steps = duration ~/ frame;
+      int step = 0;
 
-    double latDelta =
-        (newPosition.latitude - _previousBusLocation!.latitude) / steps;
-    double lngDelta =
-        (newPosition.longitude - _previousBusLocation!.longitude) / steps;
+      double latDelta =
+      (newPosition.latitude - _previousBusLocation!.latitude) / steps;
+      double lngDelta =
+      (newPosition.longitude - _previousBusLocation!.longitude) / steps;
 
-    _animationTimer?.cancel();
+      _animationTimer?.cancel();
 
-    _animationTimer =
-        Timer.periodic(const Duration(milliseconds: frame), (timer) {
-          step++;
+      _animationTimer =
+      Timer.periodic(const Duration(milliseconds: frame), (timer) {
+      step++;
 
-          LatLng pos = LatLng(
-            _previousBusLocation!.latitude + latDelta * step,
-            _previousBusLocation!.longitude + lngDelta * step,
-          );
+      LatLng pos = LatLng(
+      _previousBusLocation!.latitude + latDelta * step,
+      _previousBusLocation!.longitude + lngDelta * step,
+      );
 
-          setState(() {
-            _busMarker = Marker(
-              markerId: const MarkerId("bus"),
-              position: pos,
-              icon: _busIcon ?? BitmapDescriptor.defaultMarker,
-              rotation: _currentRotation,
-              anchor: const Offset(0.5, 0.5),
-              flat: true,
-            );
-          });
+      if (!mounted) {
+      timer.cancel();
+      return;
+      }
 
-          if (step >= steps) {
-            timer.cancel();
-            _previousBusLocation = newPosition;
-          }
-        });
-  }
-  // ================= ROUTE POLYLINE LISTENER =================
-  Future<void> _listenRoutePolyline() async {
-    if (busId == null) return;
+      setState(() {
+      _busMarker = Marker(
+      markerId: const MarkerId("bus"),
+      position: pos,
+      icon: _busIcon ?? BitmapDescriptor.defaultMarker,
+      rotation: _currentRotation,
+      anchor: const Offset(0.5, 0.5),
+      flat: true,
+      );
+      });
 
-    print("🔥 Listening encoded polyline for $busId");
+      if (step >= steps) {
+      timer.cancel();
+      _previousBusLocation = newPosition;
+      }
+      });
+      }
+      // ================= ROUTE POLYLINE LISTENER =================
+      Future<void> _listenRoutePolyline() async {
+      if (busId == null) return;
 
-    _polylineListener?.cancel();
+      print("🔥 Listening encoded polyline for $busId");
 
-    _polylineListener = FirebaseDatabase.instance
-        .ref("busRoutes/$busId/fullRoadPolyline")
-        .onValue
-        .listen((event) {
+      _polylineListener?.cancel();
+
+      _polylineListener = FirebaseDatabase.instance
+          .ref("busRoutes/$busId/fullRoadPolyline")
+          .onValue
+          .listen((event) {
 
       final data = event.snapshot.value;
 
       if (data == null) {
-        print("❌ No polyline data");
-        return;
+      print("❌ No polyline data");
+      return;
       }
 
       // ✅ Firebase gives STRING
@@ -493,363 +612,413 @@ class _MapPageState extends State<MapPage> {
       print("✅ Decoded points = ${points.length}");
 
       setState(() {
-        _polylines = {
-          Polyline(
-            polylineId: const PolylineId("route"),
-            points: points,
-            width: 6,
-            color: Colors.blue,
-          ),
-        };
 
-        // 🔥 VERY IMPORTANT
-        _routePoints = points;
+      _routePoints = points;
+
+      List<LatLng> remaining;
+
+      if (_busLocation != null) {
+        remaining = _getRemainingRoute();
+        remaining.insert(0, _busLocation!); // start route from bus
+      } else {
+        remaining = points; // fallback before GPS arrives
+      }
+
+      _polylines = {
+        Polyline(
+          polylineId: const PolylineId("route"),
+          points: remaining,
+          width: 6,
+          color: Colors.blue,
+        ),
+      };
+      });
+          });
+      }
+// ================= ROAD FOLLOW ANIMATION =================
+      void _animateBusAlongRoad(double bearing) {
+      if (_busSpeedMps < 0.5) return;
+      if (_roadPath.isEmpty) return;
+      if (_roadAnimationTimer?.isActive ?? false) return;
+
+      _roadAnimationTimer?.cancel();
+      _roadIndex = 0;
+
+      _roadAnimationTimer =
+      Timer.periodic(
+      Duration(milliseconds: _calculateAnimationDelay()),
+      (timer) {
+      if (_roadIndex >= _roadPath.length) {
+      timer.cancel();
+      return;
+      }
+      LatLng pos = _roadPath[_roadIndex];
+
+      if (!mounted) {
+      timer.cancel();
+      return;
+      }
+
+      setState(() {
+      _busMarker = Marker(
+      markerId: const MarkerId("bus"),
+      position: pos,
+      icon: _busIcon ?? BitmapDescriptor.defaultMarker,
+      rotation: _currentRotation,
+      anchor: const Offset(0.5, 0.5),
+      flat: true,
+      );
       });
 
-      _fitRouteToScreen(points);
-    });
-  }
-// ================= ROAD FOLLOW ANIMATION =================
-  void _animateBusAlongRoad(double bearing) {
-    if (_busSpeedMps < 0.5) return;
-    if (_roadPath.isEmpty) return;
-    if (_roadAnimationTimer?.isActive ?? false) return;
+      if (_followBus) {
+      if (_mapController != null && mounted) {
+      _mapController!.animateCamera(
+      CameraUpdate.newLatLng(pos),
+      );
+      }
+      }
 
-    _roadAnimationTimer?.cancel();
-    _roadIndex = 0;
-
-    _roadAnimationTimer =
-        Timer.periodic(
-            Duration(milliseconds: _calculateAnimationDelay()),
-                (timer) {
-              if (_roadIndex >= _roadPath.length) {
-                timer.cancel();
-                return;
-              }
-
-              LatLng pos = _roadPath[_roadIndex];
-
-              setState(() {
-                _busMarker = Marker(
-                  markerId: const MarkerId("bus"),
-                  position: pos,
-                  icon: _busIcon ?? BitmapDescriptor.defaultMarker,
-                  rotation: _currentRotation,
-                  anchor: const Offset(0.5, 0.5),
-                  flat: true,
-                );
-              });
-
-              if (_followBus) {
-                _mapController?.animateCamera(
-                  CameraUpdate.newLatLng(pos),
-                );
-              }
-
-              _roadIndex++;
-            });
-  }
+      _roadIndex++;
+      });
+      }
 
 // ================= SMOOTH ROTATION =================
 
-  void _smoothRotate(double newBearing) {
-    _targetRotation = newBearing;
+      void _smoothRotate(double newBearing) {
+      _targetRotation = newBearing;
 
-    _rotationTimer?.cancel();
+      _rotationTimer?.cancel();
 
-    _rotationTimer =
-        Timer.periodic(const Duration(milliseconds: 30), (timer) {
-          double diff = _targetRotation - _currentRotation;
+      _rotationTimer =
+      Timer.periodic(const Duration(milliseconds: 30), (timer) {
 
-          // normalize shortest angle
-          if (diff > 180) diff -= 360;
-          if (diff < -180) diff += 360;
+      if (!mounted) {
+      timer.cancel();
+      return;
+      }
 
-          // small step rotation
-          setState(() {
-            _currentRotation += diff * 0.15;
-          });
+      double diff = _targetRotation - _currentRotation;
 
-          // stop when very close
-          if (diff.abs() < 0.5) {
-            setState(() {
-              _currentRotation = _targetRotation;
-            });
-            timer.cancel();
-          }
-        });
-  }
+      // normalize shortest angle
+      if (diff > 180) diff -= 360;
+      if (diff < -180) diff += 360;
 
-  int _calculateAnimationDelay() {
-    double speed = _busSpeedMps.clamp(1, 20);
-    int delay = (80 - (speed * 3)).toInt();
-    return delay.clamp(20, 120);
-  }
+      // small step rotation
+      setState(() {
+      _currentRotation += diff * 0.15;
+      });
 
-  void _startPredictiveMotion(LatLng gpsPos, double bearing) {
-    _predictiveTimer?.cancel();
+      // stop when very close
+      if (diff.abs() < 0.5) {
+      setState(() {
+      _currentRotation = _targetRotation;
+      });
+      timer.cancel();
+      }
+      });
+      }
+      int _calculateAnimationDelay() {
+      double speed = _busSpeedMps.clamp(1, 15);
+      int delay = (80 - (speed * 3)).toInt();
+      return delay.clamp(25, 120);
+      }
 
-    _predictedPosition = gpsPos;
-    DateTime lastTick = DateTime.now();
+      void _startPredictiveMotion(LatLng gpsPos, double bearing) {
+      _predictiveTimer?.cancel();
 
-    _predictiveTimer =
-        Timer.periodic(const Duration(milliseconds: 120), (timer) {
-          // 🧠 pause prediction right after GPS update
-          if (_gpsJustUpdated) {
-            _gpsJustUpdated = false;
-            _predictedPosition = gpsPos;
-            return;
-          }
+      _predictedPosition = gpsPos;
+      DateTime lastTick = DateTime.now();
 
-          if (_busSpeedMps < 0.5) return;
+      _predictiveTimer =
+      Timer.periodic(const Duration(milliseconds: 120), (timer) {
 
-          final now = DateTime.now();
-          double dt =
-              now
-                  .difference(lastTick)
-                  .inMilliseconds / 1000.0;
+      if (!mounted) {
+      timer.cancel();
+      return;
+      }
+      // 🧠 pause prediction right after GPS update
+      if (_gpsJustUpdated) {
+      _gpsJustUpdated = false;
+      _predictedPosition = gpsPos;
+      return;
+      }
 
-          lastTick = now;
+      if (_busSpeedMps < 0.5) return;
 
-          double distance = _busSpeedMps * dt;
+      final now = DateTime.now();
+      double dt =
+      now
+          .difference(lastTick)
+          .inMilliseconds / 1000.0;
 
-          _predictedPosition = _projectPosition(
-            _predictedPosition!,
-            _currentRotation,
-            distance,
-          );
+      lastTick = now;
 
-          setState(() {
-            _busMarker = Marker(
-              markerId: const MarkerId("bus"),
-              position: _predictedPosition!,
-              icon: _busIcon ?? BitmapDescriptor.defaultMarker,
-              rotation: _currentRotation,
-              anchor: const Offset(0.5, 0.5),
-              flat: true,
-            );
-          });
+      double distance = _busSpeedMps * dt;
 
-          if (_followBus) {
-            _mapController?.animateCamera(
-              CameraUpdate.newLatLng(_predictedPosition!),
-            );
-          }
-        });
-  }
+      _predictedPosition = _projectPosition(
+      _predictedPosition!,
+      _currentRotation,
+      distance,
+      );
+
+      setState(() {
+      _busMarker = Marker(
+      markerId: const MarkerId("bus"),
+      position: _predictedPosition!,
+      icon: _busIcon ?? BitmapDescriptor.defaultMarker,
+      rotation: _currentRotation,
+      anchor: const Offset(0.5, 0.5),
+      flat: true,
+      );
+      });
+
+      if (_followBus && _mapController != null && mounted) {
+      _mapController!.animateCamera(
+      CameraUpdate.newLatLng(_predictedPosition!),
+      );
+      }
+      });
+      }
 
 // ================= CINEMATIC CAMERA =================
-  void _startCinematicCamera(LatLng target) {
-    if (!_followBus) return;
+      void _startCinematicCamera(LatLng target) {
+      if (!_followBus) return;
 
-// 👇 look ahead position
-    LatLng lookAhead =
-    _calculateLookAheadPosition(target, _currentRotation);
+      LatLng lookAhead =
+      _calculateLookAheadPosition(target, _currentRotation);
 
-    _cameraTimer?.cancel();
+      _cameraTimer?.cancel();
 
-    _cameraPosition ??= lookAhead;
-    _cameraTimer =
-        Timer.periodic(const Duration(milliseconds: 40), (timer) {
-          if (_cameraPosition == null || _mapController == null) return;
+      _cameraPosition ??= lookAhead;
+      _cameraTimer =
+      Timer.periodic(const Duration(milliseconds: 40), (timer) {
+      if (_cameraPosition == null || _mapController == null) return;
 
-          double lat = _cameraPosition!.latitude +
-              (lookAhead.latitude - _cameraPosition!.latitude) * 0.06;
-          ;
+      double lat = _cameraPosition!.latitude +
+      (lookAhead.latitude - _cameraPosition!.latitude) * 0.06;
+      ;
 
-          double lng = _cameraPosition!.longitude +
-              (lookAhead.longitude - _cameraPosition!.longitude) * 0.06;
-          ;
+      double lng = _cameraPosition!.longitude +
+      (lookAhead.longitude - _cameraPosition!.longitude) * 0.06;
+      ;
 
-          _cameraPosition = LatLng(lat, lng);
+      _cameraPosition = LatLng(lat, lng);
 
-          _mapController?.moveCamera(
-            CameraUpdate.newCameraPosition(
-              CameraPosition(
-                target: _cameraPosition!,
-                zoom: 16,
-                tilt: 45,
-                bearing: _currentRotation,
-              ),
-            ),
-          );
+      if (_mapController != null && mounted) {
+      _mapController!.moveCamera(
+      CameraUpdate.newCameraPosition(
+      CameraPosition(
+      target: _cameraPosition!,
+      zoom: 16,
+      tilt: 45,
+      bearing: _currentRotation,
+      ),
+      ),
+      );
+      }
 
-          double diffLat = (lookAhead.latitude - lat).abs();
-          double diffLng = (lookAhead.longitude - lng).abs();
+      double diffLat = (lookAhead.latitude - lat).abs();
+      double diffLng = (lookAhead.longitude - lng).abs();
 
-          if (diffLat < 0.00001 && diffLng < 0.00001) {
-            timer.cancel();
-          }
-        });
-  }
+      if (diffLat < 0.00001 && diffLng < 0.00001) {
+      timer.cancel();
+      }
+      });
+      }
 
 // ================= BACKEND SMART ETA =================
-  Future<void> _fetchETAFromBackend() async {
-    print("==== CALLING ETA ====");
-    print("busId: $busId");
-    print("busLocation: $_busLocation");
-    print("studentStopLocation: $_studentStopLocation");
+      Future<void> _fetchETAFromBackend() async {
+      print("==== CALLING ETA ====");
+      print("busId: $busId");
+      print("busLocation: $_busLocation");
+      print("studentStopLocation: $_studentStopLocation");
 
-    if (_busLocation != null) {
+      if (_busLocation != null) {
       print("originLat: ${_busLocation!.latitude}");
       print("originLng: ${_busLocation!.longitude}");
-    }
+      }
 
-    if (_studentStopLocation != null) {
+      if (_studentStopLocation != null) {
       print("destLat: ${_studentStopLocation!.latitude}");
       print("destLng: ${_studentStopLocation!.longitude}");
-    }
+      }
 
-    if (busId == null ||
-        _busLocation == null ||
-        _studentStopLocation == null) {
+      if (busId == null ||
+      _busLocation == null ||
+      _studentStopLocation == null) {
       return;
-    }
+      }
 
-    try {
+      try {
       final url =
-          "/drivers/eta"
-          "?originLat=${_busLocation!.latitude}"
-          "&originLng=${_busLocation!.longitude}"
-          "&destLat=${_studentStopLocation!.latitude}"
-          "&destLng=${_studentStopLocation!.longitude}"
-          "&busId=$busId"
-          "&nextStop=${_nextStopName ?? ""}";
+      "/drivers/eta"
+      "?originLat=${_busLocation!.latitude}"
+      "&originLng=${_busLocation!.longitude}"
+      "&destLat=${_studentStopLocation!.latitude}"
+      "&destLng=${_studentStopLocation!.longitude}"
+      "&busId=$busId"
+      "&nextStop=${_nextStopName ?? ""}";
 
       final response =
       await ApiService.get(url)
           .timeout(const Duration(seconds: 8));
 
       if (response.statusCode != 200) {
-        print("ETA API failed");
-        return;
+      print("ETA API failed");
+      return;
       }
 
       final data = jsonDecode(response.body);
+// ✅ UPDATE NEXT STOP INFO
+        if (data["nextStop"] != null) {
+          _nextStopName = data["nextStop"];
+        }
 
+        if (data["nextStopOrder"] != null) {
+          _nextStopOrder = data["nextStopOrder"];
+        }
+
+// 🔁 refresh stop markers
+        await _fetchRouteStopsFromBackend();
       // ✅ START COUNTDOWN
       if (data["durationValue"] != null) {
-        int seconds =
-        (data["durationValue"] as num).toInt();
+      int seconds =
+      (data["durationValue"] as num).toInt();
 
-        _startCountdown(seconds);
+      _startCountdown(seconds);
       }
 
       // ✅ POLYLINE
       final polylineString = data["polyline"];
 
       if (polylineString != null &&
-          polylineString
-              .toString()
-              .isNotEmpty) {
-        PolylinePoints polylinePoints = PolylinePoints();
+      polylineString
+          .toString()
+          .isNotEmpty) {
+      PolylinePoints polylinePoints = PolylinePoints();
 
-        List<PointLatLng> result =
-        polylinePoints.decodePolyline(polylineString);
+      List<PointLatLng> result =
+      polylinePoints.decodePolyline(polylineString);
 
-        List<LatLng> decodedPoints =
-        result.map((p) =>
-            LatLng(p.latitude, p.longitude)).toList();
+      List<LatLng> decodedPoints =
+      result.map((p) =>
+      LatLng(p.latitude, p.longitude)).toList();
 
-        _roadPath = decodedPoints;
+      _roadPath = decodedPoints;
 
-        if (mounted) {
-          setState(() {
-            _polylines = {
-              Polyline(
-                polylineId: const PolylineId("roadRoute"),
-                points: decodedPoints,
-                width: 5,
-                color: Colors.blue,
-              ),
-            };
-          });
-        }
+      if (mounted) {
+      // Keep Firebase route polyline
+// Only update ETA values
       }
-    } catch (e) {
+      }
+      } catch (e) {
       print("❌ ETA error: $e");
-    }
-  }
+      }
+      }
 
-  @override
-  void dispose() {
-    _animationTimer?.cancel();
-    _etaTimer?.cancel();
-    _busListener?.cancel();
-    _stopListener?.cancel();
-    _roadAnimationTimer?.cancel();
-    _rotationTimer?.cancel();
-    _predictiveTimer?.cancel();
-    _cameraTimer?.cancel();
-    _countdownTimer?.cancel();
-    _polylineListener?.cancel();
-    super.dispose();
-  }
+      @override
+      void dispose() {
+      _animationTimer?.cancel();
+      _etaTimer?.cancel();
+      _busListener?.cancel();
+      _stopListener?.cancel();
+      _roadAnimationTimer?.cancel();
+      _rotationTimer?.cancel();
+      _predictiveTimer?.cancel();
+      _followBus = false;
+      _cameraTimer?.cancel();
+      _countdownTimer?.cancel();
+      _polylineListener?.cancel();
+      super.dispose();
+      }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
+      @override
+      Widget build(BuildContext context) {
+      return Scaffold(
       appBar: AppBar(title: const Text("Live Bus Map")),
       body: Stack(
-        children: [
-          GoogleMap(
-            initialCameraPosition: CameraPosition(
-              target: _studentLocation,
-              zoom: 14,
-            ),
-            onMapCreated: (controller) {
-              _mapController = controller;
-            },
-            myLocationEnabled: true,
-            markers: {
-              if (_busMarker != null) _busMarker!,
-              if (_studentMarker != null) _studentMarker!,
-              ..._stopMarkers,
-            },
-            polylines: _polylines,
-          ),
-
-          if (_etaSeconds != null)
-            Positioned(
-              top: 20,
-              left: 20,
-              right: 20,
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.black87,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  "Bus arriving in "
-                      "${(_etaSeconds! ~/ 60)}m "
-                      "${(_etaSeconds! % 60).toString().padLeft(2, '0')}s",
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ),
-
-          Positioned(
-            bottom: 100,
-            right: 20,
-            child: FloatingActionButton(
-              backgroundColor: _followBus ? Colors.blue : Colors.grey,
-              onPressed: () {
-                setState(() {
-                  _followBus = !_followBus;
-                });
-              },
-              child: Icon(
-                _followBus ? Icons.gps_fixed : Icons.gps_not_fixed,
-              ),
-            ),
-          ),
-        ],
+      children: [
+      GoogleMap(
+      initialCameraPosition: CameraPosition(
+      target: _studentLocation,
+      zoom: 14,
       ),
-    );
-  }
-}
+      onMapCreated: (controller) {
+      _mapController = controller;
+      },
+      myLocationEnabled: true,
+      markers: {
+      if (_busMarker != null) _busMarker!,
+      if (_studentMarker != null) _studentMarker!,
+      ..._stopMarkers,
+      },
+      polylines: _polylines,
+      ),
+
+        if (_etaSeconds != null)
+          Positioned(
+            top: 20,
+            left: 20,
+            right: 20,
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                "Bus arriving in "
+                    "${(_etaSeconds! ~/ 60)}m "
+                    "${(_etaSeconds! % 60).toString().padLeft(2, '0')}s",
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+
+        /// ⭐ ADD THIS BLOCK HERE
+        if (_distanceToBus != null)
+          Positioned(
+            top: 80,
+            left: 20,
+            right: 20,
+            child: Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                "Bus distance: ${_distanceToBus!.toStringAsFixed(2)} km",
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+
+        Positioned(
+          bottom: 100,
+          right: 20,
+          child: FloatingActionButton(
+            backgroundColor: _followBus ? Colors.blue : Colors.grey,
+            onPressed: () {
+              setState(() {
+                _followBus = !_followBus;
+              });
+            },
+            child: Icon(
+              _followBus ? Icons.gps_fixed : Icons.gps_not_fixed,
+            ),
+           ),
+          ),
+         ],
+        ),
+      );
+   }
+ }

@@ -21,12 +21,13 @@ class DriverHomePage extends StatefulWidget {
   State<DriverHomePage> createState() => _DriverHomePageState();
 
 }
-
 class _DriverHomePageState extends State<DriverHomePage>
     with SingleTickerProviderStateMixin {
+
   bool tripStarted = false;
   String? tripMode;
-  // 🔑 BUS INFO STATE (ADDED)
+
+  // 🔑 BUS INFO STATE
   String busNumber = "-";
   String routeName = "-";
   String shift = "-";
@@ -44,26 +45,44 @@ class _DriverHomePageState extends State<DriverHomePage>
   bool internetOn = false;
   bool locationSyncOn = false;
   bool tripEnding = false;
+
   String? busId;
   String? permBusId;
   String? currentTripId;
+
   StreamSubscription<Position>? positionStream;
   StreamSubscription? _tempBusListener;
+
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
   late Animation<Offset> _slideAnim;
+
   bool _buttonPressed = false;
+
   // 🗺️ MAP STATE
   GoogleMapController? _mapController;
   Marker? _driverMarker;
-  LatLng _currentLatLng = const LatLng(13.0827, 80.2707); // default
+  LatLng _currentLatLng = const LatLng(13.0827, 80.2707);
 
   // 🧵 ROUTE POLYLINE STATE
   final List<LatLng> _routePoints = [];
 
+  // ✅ SHIFT FUNCTION (MOVE HERE)
+  String _getShiftByTime() {
+    final now = DateTime.now();
+    final hour = now.hour;
+
+    if (hour < 12) {
+      return "MORNING";
+    } else {
+      return "EVENING";
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+
     _animController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 700),
@@ -86,6 +105,9 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     _animController.forward();
     _initialize();
+
+    // AUTO SET SHIFT WHEN PAGE LOADS
+    shift = _getShiftByTime();
 
     _gpsCheckTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
       if (tripStarted) {
@@ -157,8 +179,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       // Permanent
       permBusNumber = prefs.getString("busNumber") ?? "-";
       permRouteName = prefs.getString("routeName") ?? "-";
-      shift = prefs.getString("shift") ?? "-";
-
+      shift = _getShiftByTime();
       // Temporary
       isTempBusActive = prefs.getBool("isTempBusActive") ?? false;
       tempBusNumber = prefs.getString("tempBusNumber");
@@ -237,6 +258,9 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
   // ---------------- CHECK GPS / INTERNET ---------------------------------------
   Future<void> _checkStatuses() async {
+
+    if (!mounted) return;
+
     final gpsEnabled = await Geolocator.isLocationServiceEnabled();
 
     final ConnectivityResult connectivity =
@@ -244,15 +268,19 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     final bool netEnabled = connectivity != ConnectivityResult.none;
 
+    if (!mounted) return;
+
     setState(() {
       gpsOn = gpsEnabled;
       internetOn = netEnabled;
       locationSyncOn = tripStarted && gpsOn && internetOn;
     });
 
-    // AUTO STOP TRIP IF GPS TURNED OFF
     if (tripStarted && !gpsOn && !tripEnding) {
+
       tripEnding = true;
+
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("GPS turned OFF! Trip stopped")),
@@ -363,59 +391,101 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
   //==================== START TRIP WITH MODE (NEW) =================
   Future<void> _startTripWithMode(String mode) async {
-
     if (busId == null) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Bus ID not found")),
       );
       return;
     }
+
     await _checkStatuses();
 
     if (!gpsOn || !internetOn) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Enable GPS & Internet first")),
       );
       return;
     }
 
+    try {
+      final response = await ApiService.post(
+        "/drivers/start-trip",
+        {
+          "busId": busId,
+          "mode": mode,
+        },
+      );
 
-    final response = await ApiService.post(
-      "/drivers/start-trip",
-      {
-        "busId": busId,
-        "mode": mode,
-      },
-    );
+      print("START TRIP RESPONSE → ${response.body}");
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
+      if (response.statusCode != 200) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to start trip")),
+        );
+        return;
+      }
 
-      currentTripId = data["tripId"];
+      if (response.body.isEmpty) {
+        print("Start trip API returned empty response");
+        return;
+      }
 
-      setState(() {
-        tripStarted = true;
-        FlutterBackgroundService().startService();
-        FlutterBackgroundService().invoke("setBusId", {
-          "busId": busId
+      Map<String, dynamic> data = jsonDecode(response.body ?? "{}");
+
+      currentTripId = data["tripId"]?.toString();
+
+      // Update UI
+      if (mounted) {
+        setState(() {
+          tripStarted = true;
+          tripMode = mode;
         });
-        tripMode = mode;
+      }
+
+      // Start background service
+      final service = FlutterBackgroundService();
+
+      bool running = await service.isRunning();
+      if (!running) {
+        await service.startService();
+      }
+
+      service.invoke("setBusId", {
+        "busId": busId,
       });
+
+      // Save trip state locally
       final prefs = await SharedPreferences.getInstance();
+
       await prefs.setBool("trackingActive", true);
-      await prefs.setString("activeTripId", currentTripId!);
+
+      if (currentTripId != null) {
+        await prefs.setString("activeTripId", currentTripId!);
+      }
+
       await prefs.setString("tripMode", mode);
 
       await _checkStatuses();
 
-      _startLocationUpdates();
+      // Start GPS tracking
+      await _startLocationUpdates();
+
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("$mode trip started")),
       );
-    } else {
+
+    } catch (e) {
+      print("START TRIP ERROR → $e");
+
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Failed to start trip")),
+        const SnackBar(content: Text("Trip start failed")),
       );
     }
   }
@@ -477,7 +547,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       permRouteName = data["busName"];
       busId = data["busId"];
       permBusId = data["busId"];
-      shift = data["shift"] ?? "-";
+      shift = _getShiftByTime();
     });
 
     // 🔥 UPDATE BACKGROUND SERVICE IF TRIP ACTIVE

@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 String? activeBusId;
 double _lastSpeed = 0;
@@ -27,6 +29,10 @@ Future<void> initializeService() async {
 @pragma('vm:entry-point')
 Future<void> onStart(ServiceInstance service) async {
 
+  /// 🔥 REQUIRED FOR BACKGROUND ISOLATE
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+
   if (service is AndroidServiceInstance) {
     service.setForegroundNotificationInfo(
       title: "Smart Bus Tracking",
@@ -34,19 +40,19 @@ Future<void> onStart(ServiceInstance service) async {
     );
   }
 
-  // 🔵 RECEIVE BUS ID FROM DRIVER APP
+  /// 🔵 RECEIVE BUS ID FROM DRIVER APP
   service.on("setBusId").listen((event) {
     activeBusId = event?["busId"]?.toString().toUpperCase();
     print("🔥 Background busId updated → $activeBusId");
   });
 
-  // 🔴 STOP SERVICE WHEN TRIP ENDS
+  /// 🔴 STOP SERVICE WHEN TRIP ENDS
   service.on("stopService").listen((event) {
     print("🛑 Background service stopping...");
     service.stopSelf();
   });
 
-  // 🟢 LOCATION LOOP
+  /// 🟢 LOCATION LOOP
   Timer.periodic(const Duration(seconds: 8), (timer) async {
 
     if (service is AndroidServiceInstance) {
@@ -55,18 +61,19 @@ Future<void> onStart(ServiceInstance service) async {
         return;
       }
     }
+
     if (activeBusId == null) return;
 
     try {
 
-      // 🔹 CHECK GPS SERVICE
+      /// 🔹 CHECK GPS SERVICE
       bool gpsEnabled = await Geolocator.isLocationServiceEnabled();
       if (!gpsEnabled) {
         print("❌ GPS disabled");
         return;
       }
 
-      // 🔹 CHECK LOCATION PERMISSION
+      /// 🔹 CHECK LOCATION PERMISSION
       LocationPermission permission = await Geolocator.checkPermission();
 
       if (permission == LocationPermission.denied ||
@@ -75,12 +82,12 @@ Future<void> onStart(ServiceInstance service) async {
         return;
       }
 
-      // 🔹 GET CURRENT POSITION
+      /// 🔹 GET CURRENT POSITION
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
 
-      // ================= SPEED STABILIZATION =================
+      /// ================= SPEED STABILIZATION =================
 
       double realSpeed = position.speed;
 
@@ -99,7 +106,7 @@ Future<void> onStart(ServiceInstance service) async {
 
       print("📡 BG UPDATE → Bus:$activeBusId | Speed:$realSpeed m/s");
 
-      // 🔹 UPDATE FIREBASE
+      /// 🔹 UPDATE FIREBASE
       await FirebaseDatabase.instance
           .ref("buses/$activeBusId/current")
           .update({
