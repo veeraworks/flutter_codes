@@ -49,10 +49,11 @@ class _TemporaryBusChangePageState
     String savedBus = prefs.getString("busNumber") ?? "-";
     String savedRoute = prefs.getString("routeName") ?? "";
 
-    // Ensure route exists in dropdown
     if (!routes.contains(savedRoute)) {
       savedRoute = routes.isNotEmpty ? routes.first : "";
     }
+
+    if (!mounted) return;
 
     setState(() {
       isTempActive = prefs.getBool("isTempBusActive") ?? false;
