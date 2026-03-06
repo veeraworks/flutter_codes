@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'service/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'driver_home_page.dart';
+import 'package:flutter/services.dart';
 
 class DriverOtpPage extends StatefulWidget {
   final String phoneNumber;
@@ -53,15 +54,19 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
           final prefs = await SharedPreferences.getInstance();
 
           // ✅ SAVE ALL REQUIRED VALUES
+          await prefs.setString("driverName", driver["name"] ?? "");
+          await prefs.setString("phone", widget.phoneNumber);
+          await prefs.setString("licenseNo", driver["licenseNo"] ?? "");
+
           await prefs.setString("busId", driver["busId"] ?? "");
           await prefs.setString("permBusId", driver["busId"] ?? "");
-          await prefs.setString("busNumber", driver["busNumber"] ?? "");
-          await prefs.setString("routeName", driver["routeName"] ?? "");
+          await prefs.setString("routeName", driver["busName"] ?? "");
           await prefs.setString("shift", driver["shift"] ?? "");
 
           await prefs.setBool("isLoggedIn", true);
           await prefs.setString("role", "driver");
           await prefs.setBool("isTempBusActive", false);
+
           if (!mounted) return;
 
           Navigator.pushReplacement(
@@ -168,6 +173,10 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
                   controller: otpController,
                   keyboardType: TextInputType.number,
                   maxLength: 6,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
+                  ],
                   decoration: InputDecoration(
                     hintText: "Enter OTP",
                     counterText: "",

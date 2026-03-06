@@ -19,6 +19,21 @@ class _SettingsPageState extends State<SettingsPage> {
 
   static const Color primaryColor = Color(0xFF00BFA6);
   static const Color greyIcon = Colors.black54;
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    if (!mounted) return;
+
+    setState(() {
+      notificationOn = prefs.getBool("notificationsOn") ?? true;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -63,8 +78,12 @@ class _SettingsPageState extends State<SettingsPage> {
                 borderRadius: BorderRadius.circular(14)),
             child: SwitchListTile(
               value: notificationOn,
-              onChanged: (val) {
+              onChanged: (val) async {
+                final prefs = await SharedPreferences.getInstance();
+
                 setState(() => notificationOn = val);
+
+                await prefs.setBool("notificationsOn", val);
               },
               activeColor: primaryColor,
               title: const Text("Notifications"),
@@ -243,6 +262,8 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _loadProfile() async {
     final prefs = await SharedPreferences.getInstance();
+
+    if (!mounted) return;
 
     setState(() {
       name = prefs.getString("studentName") ?? "Not Available";
