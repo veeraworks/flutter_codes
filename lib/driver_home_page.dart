@@ -215,7 +215,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         final String? newRoute = data["tempRoute"];
 
         if (newBus == null || newBus == busId) return;
-
+        if (!mounted) return;
         setState(() {
           isTempBusActive = true;
           tempBusNumber = newBus;
@@ -351,6 +351,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       print("SMOOTHED SPEED → $realSpeed m/s");
 
       // ================= UI UPDATE =================
+      if (!mounted) return;
+
       setState(() {
         _currentLatLng = latLng;
 
@@ -549,7 +551,6 @@ class _DriverHomePageState extends State<DriverHomePage>
       FlutterBackgroundService().invoke("stopService");
 
       if (!mounted) return;
-
       setState(() {
         tripStarted = false;
         currentTripId = null;
