@@ -11,8 +11,6 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'dart:math';
 
-const String googleKey = "";
-
 class MapPage extends StatefulWidget {
   const MapPage({super.key});
 
@@ -74,7 +72,7 @@ class _MapPageState extends State<MapPage> {
 
   LatLng? _cameraPosition;
   Timer? _cameraTimer;
-  double _lookAheadDistance = 35; // meters
+  final double _lookAheadDistance = 35; // meters
 
   DateTime? _lastGpsTime;
   LatLng? _lastGpsPosition;
@@ -149,6 +147,22 @@ class _MapPageState extends State<MapPage> {
       },
     );
   }
+  void _updateBusMarker(LatLng position) {
+    final marker = Marker(
+      markerId: const MarkerId("bus"),
+      position: position,
+      icon: _busIcon ?? BitmapDescriptor.defaultMarker,
+      rotation: _currentRotation,
+      anchor: const Offset(0.5, 0.5),
+      flat: true,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _busMarker = marker;
+    });
+  }
 
   void _startCountdown(int seconds) {
     _countdownTimer?.cancel();
@@ -171,7 +185,7 @@ class _MapPageState extends State<MapPage> {
 
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    busId = prefs.getString("busId");
+    busId = prefs.getString("busId")?.toUpperCase();
     stopName = prefs.getString("boardingPoint");
 
     print("Loaded busId: $busId");
@@ -424,6 +438,18 @@ class _MapPageState extends State<MapPage> {
         (map["lng"] as num).toDouble(),
       );
 
+      if (_previousBusLocation != null) {
+        double move = Geolocator.distanceBetween(
+          _previousBusLocation!.latitude,
+          _previousBusLocation!.longitude,
+          newPos.latitude,
+          newPos.longitude,
+        );
+
+        if (move < 1) {
+          return;
+        }
+      }
       print("🔥 BUS REALTIME EVENT TRIGGERED");
 
       // mark GPS update
@@ -472,6 +498,7 @@ class _MapPageState extends State<MapPage> {
         }
       }
       _busLocation = snappedPos;
+      _previousBusLocation = snappedPos;
       // calculate distance from student
       if (_studentStopLocation != null) {
         _distanceToBus = Geolocator.distanceBetween(
@@ -482,16 +509,8 @@ class _MapPageState extends State<MapPage> {
         ) / 1000;
       }
       // show driver marker immediately
-      setState(() {
-        _busMarker = Marker(
-          markerId: const MarkerId("bus"),
-          position: snappedPos,
-          icon: _busIcon ?? BitmapDescriptor.defaultMarker,
-          rotation: _currentRotation,
-          anchor: const Offset(0.5, 0.5),
-          flat: true,
-        );
-      });
+      _updateBusMarker(snappedPos);
+
       // 📍 move camera to bus when first GPS arrives
       if (_mapController != null && _cameraPosition == null) {
         _cameraPosition = snappedPos;
@@ -611,16 +630,7 @@ class _MapPageState extends State<MapPage> {
             return;
           }
 
-          setState(() {
-            _busMarker = Marker(
-              markerId: const MarkerId("bus"),
-              position: pos,
-              icon: _busIcon ?? BitmapDescriptor.defaultMarker,
-              rotation: _currentRotation,
-              anchor: const Offset(0.5, 0.5),
-              flat: true,
-            );
-          });
+          _updateBusMarker(pos);
 
           if (step >= steps) {
             timer.cancel();
@@ -651,6 +661,10 @@ class _MapPageState extends State<MapPage> {
 
       // ✅ Firebase gives STRING
       String encodedPolyline = data.toString();
+      if (encodedPolyline.isEmpty) {
+        print("Polyline empty");
+        return;
+      }
 
       print("✅ Polyline string received");
 
@@ -663,25 +677,19 @@ class _MapPageState extends State<MapPage> {
           .map((p) => LatLng(p.latitude, p.longitude))
           .toList();
 
-      print("✅ Decoded points = ${points.length}");
+      if (points.isEmpty) {
+        print("Decoded polyline empty");
+        return;
+      }
 
       setState(() {
 
         _routePoints = points;
 
-        List<LatLng> remaining;
-
-        if (_busLocation != null) {
-          remaining = _getRemainingRoute();
-          remaining.insert(0, _busLocation!); // start route from bus
-        } else {
-          remaining = points; // fallback before GPS arrives
-        }
-
         _polylines = {
           Polyline(
             polylineId: const PolylineId("route"),
-            points: remaining,
+            points: points,   // show full route
             width: 6,
             color: Colors.blue,
           ),
@@ -713,16 +721,7 @@ class _MapPageState extends State<MapPage> {
                 return;
               }
 
-              setState(() {
-                _busMarker = Marker(
-                  markerId: const MarkerId("bus"),
-                  position: pos,
-                  icon: _busIcon ?? BitmapDescriptor.defaultMarker,
-                  rotation: _currentRotation,
-                  anchor: const Offset(0.5, 0.5),
-                  flat: true,
-                );
-              });
+              _updateBusMarker(pos);
 
               if (_followBus) {
                 if (_mapController != null && mounted) {
@@ -815,16 +814,7 @@ class _MapPageState extends State<MapPage> {
             distance,
           );
 
-          setState(() {
-            _busMarker = Marker(
-              markerId: const MarkerId("bus"),
-              position: _predictedPosition!,
-              icon: _busIcon ?? BitmapDescriptor.defaultMarker,
-              rotation: _currentRotation,
-              anchor: const Offset(0.5, 0.5),
-              flat: true,
-            );
-          });
+          _updateBusMarker(_predictedPosition!);
 
           if (_followBus && _mapController != null && mounted) {
             _mapController!.animateCamera(
@@ -847,7 +837,7 @@ class _MapPageState extends State<MapPage> {
     _cameraPosition ??= lookAhead;
     _cameraTimer =
         Timer.periodic(const Duration(milliseconds: 40), (timer) {
-          if (_cameraPosition == null || _mapController == null) return;
+          if (!mounted || _cameraPosition == null || _mapController == null) return;
 
           double lat = _cameraPosition!.latitude +
               (lookAhead.latitude - _cameraPosition!.latitude) * 0.06;
@@ -1035,9 +1025,7 @@ class _MapPageState extends State<MapPage> {
             ),
 
           /// ⭐ ADD THIS BLOCK HERE
-          if (_distanceToBus != null)
-
-            if (_tripProgress > 0)
+          if (_distanceToBus != null && _tripProgress > 0)
               Positioned(
                 top: 140,
                 left: 20,
