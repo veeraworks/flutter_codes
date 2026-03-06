@@ -15,15 +15,12 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
   bool isTripActive = false;
   String trackingStatus = "Inactive";
 
-  // ================= INIT =================
-
   @override
   void initState() {
     super.initState();
     _loadTrackingStatus();
   }
 
-  // ✅ refresh when page re-opened
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -36,6 +33,8 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
     final prefs = await SharedPreferences.getInstance();
 
     final bool isActive = prefs.getBool("trackingActive") ?? false;
+
+    if (!mounted) return;
 
     setState(() {
       trackingStatus = isActive ? "Active" : "Inactive";
@@ -50,7 +49,6 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
     final prefs = await SharedPreferences.getInstance();
     final bool isTracking = prefs.getBool("trackingActive") ?? false;
 
-    // 🚫 BLOCK logout if trip running
     if (isTracking) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -61,7 +59,6 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
       return;
     }
 
-    // ✅ Clear session
     await prefs.clear();
 
     if (!mounted) return;
@@ -84,90 +81,93 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
         foregroundColor: Colors.white,
       ),
       backgroundColor: const Color(0xFFF6F3F7),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
 
-          /// ================= NOTIFICATIONS =================
-          _sectionCard(
-            children: [
-              SwitchListTile(
-                value: notificationsOn,
-                title: const Text("Notifications"),
-                subtitle: const Text("Bus alerts & updates"),
-                onChanged: (v) async {
-                  final prefs =
-                  await SharedPreferences.getInstance();
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
 
-                  setState(() => notificationsOn = v);
-                  await prefs.setBool("notificationsOn", v);
-                },
-              ),
-            ],
-          ),
+            /// ================= NOTIFICATIONS =================
+            _sectionCard(
+              children: [
+                SwitchListTile(
+                  value: notificationsOn,
+                  title: const Text("Notifications"),
+                  subtitle: const Text("Bus alerts & updates"),
+                  onChanged: (v) async {
+                    final prefs =
+                    await SharedPreferences.getInstance();
 
-          const SizedBox(height: 12),
-
-          /// ================= TRACKING STATUS =================
-          _sectionCard(
-            children: [
-              _readOnlyTile(
-                icon: Icons.location_on,
-                title: "Tracking Status",
-                value: trackingStatus,
-                valueColor: trackingStatus == "Active"
-                    ? Colors.green
-                    : Colors.red,
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 12),
-
-          /// ================= APP INFO =================
-          _sectionCard(
-            children: [
-              ListTile(
-                leading: const Icon(Icons.info_outline),
-                title: const Text("App Info"),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const AboutAppPage(),
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 24),
-
-          /// ================= LOGOUT BUTTON =================
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton(
-              onPressed: isTripActive ? null : _logout,
-              style: ElevatedButton.styleFrom(
-                backgroundColor:
-                isTripActive ? Colors.grey : Colors.red,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                    setState(() => notificationsOn = v);
+                    await prefs.setBool("notificationsOn", v);
+                  },
                 ),
-              ),
-              child: const Text(
-                "LOGOUT",
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
+              ],
+            ),
+
+            const SizedBox(height: 12),
+
+            /// ================= TRACKING STATUS =================
+            _sectionCard(
+              children: [
+                _readOnlyTile(
+                  icon: Icons.location_on,
+                  title: "Tracking Status",
+                  value: trackingStatus,
+                  valueColor: trackingStatus == "Active"
+                      ? Colors.green
+                      : Colors.red,
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 12),
+
+            /// ================= APP INFO =================
+            _sectionCard(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.info_outline),
+                  title: const Text("App Info"),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AboutAppPage(),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 24),
+
+            /// ================= LOGOUT BUTTON =================
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton(
+                onPressed: isTripActive ? null : _logout,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                  isTripActive ? Colors.grey : Colors.red,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child: const Text(
+                  "LOGOUT",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -179,6 +179,12 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+          )
+        ],
       ),
       child: Column(children: children),
     );

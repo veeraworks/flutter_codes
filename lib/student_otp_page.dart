@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'service/api_service.dart';
@@ -189,10 +190,14 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
                 TextField(
                   controller: otpController,
                   keyboardType: TextInputType.number,
+                  maxLength: 6,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                  ],
                   decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.password,
-                        color: Colors.teal),
-                    hintText: "Enter OTP",
+                    prefixIcon: const Icon(Icons.password, color: Colors.teal),
+                    hintText: "Enter 6 digit OTP",
+                    counterText: "",
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),

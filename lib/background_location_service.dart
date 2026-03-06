@@ -73,10 +73,11 @@ Future<void> onStart(ServiceInstance service) async {
   });
 
   /// LOCATION UPDATE LOOP
-  Timer.periodic(const Duration(seconds: 8), (timer) async {
+  Timer.periodic(const Duration(seconds: 4), (timer) async {
 
     if (service is AndroidServiceInstance) {
       if (!await service.isForegroundService()) {
+        print("⚠ Service not in foreground, stopping timer");
         timer.cancel();
         return;
       }
@@ -101,7 +102,7 @@ Future<void> onStart(ServiceInstance service) async {
       }
 
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+        desiredAccuracy: LocationAccuracy.bestForNavigation,
         timeLimit: const Duration(seconds: 10),
       );
 

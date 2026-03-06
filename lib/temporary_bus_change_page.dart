@@ -70,6 +70,13 @@ class _TemporaryBusChangePageState
 
   // ================= APPLY TEMP CHANGE =================
   Future<void> _applyTempChange() async {
+    if (selectedBus.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select a bus")),
+      );
+      return;
+    }
+
     final prefs = await SharedPreferences.getInstance();
 
     final String? originalBus = prefs.getString("originalBusNumber");
@@ -298,6 +305,7 @@ class _TemporaryBusChangePageState
                   DropdownButtonFormField<String>(
                     value: selectedBus.isNotEmpty ? selectedBus : null,
                     items: busNumbers
+                        .where((bus) => bus != currentBus)
                         .map((bus) => DropdownMenuItem(
                       value: bus,
                       child: Text(bus),
@@ -344,8 +352,7 @@ class _TemporaryBusChangePageState
                     width: double.infinity,
                     height: 48,
                     child: ElevatedButton(
-                      onPressed: _applyTempChange,
-                      style: ElevatedButton.styleFrom(
+                      onPressed: isTempActive ? null : _applyTempChange,                      style: ElevatedButton.styleFrom(
                         backgroundColor:
                         const Color(0xFF00BFA6),
                         shape: RoundedRectangleBorder(
