@@ -15,6 +15,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
   String routeName = "-";
   String busNumber = "-";
   String phoneNumber = "-";
+  String licenseNo = "-";
 
   @override
   void initState() {
@@ -32,7 +33,8 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
       busId = prefs.getString("busId") ?? "-";
       routeName = prefs.getString("routeName") ?? "-";
       busNumber = prefs.getString("busNumber") ?? "-";
-      phoneNumber = prefs.getString("phoneNumber") ?? "-";
+      phoneNumber = prefs.getString("phone") ?? "-";
+      licenseNo = prefs.getString("licenseNo") ?? "-";
     });
   }
 
@@ -81,6 +83,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                   ProfileRow("Name", driverName),
                   ProfileRow("Bus ID", busId),
                   ProfileRow("Route", routeName),
+                  ProfileRow("License", licenseNo),
                   ProfileRow("Phone", phoneNumber),
                 ],
               ),

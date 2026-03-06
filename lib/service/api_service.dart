@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiService {
+
   // 🔥 Change this once when moving to production
   static const String baseUrl =
       "https://null-sheldon-unstudded.ngrok-free.dev";
@@ -12,6 +13,7 @@ class ApiService {
     "ngrok-skip-browser-warning": "true",
   };
 
+  // ===============POST REQUEST========================================
   static Future<http.Response> post(
       String endpoint, Map<String, dynamic> body) {
     return http.post(
@@ -21,7 +23,7 @@ class ApiService {
     );
   }
 
-  // ✅ GET Helper (GENERIC — DO NOT CHANGE)
+  // GET REQUEST (Backend)
   static Future<http.Response> get(String endpoint) {
     return http.get(
       Uri.parse("$baseUrl$endpoint"),
@@ -29,9 +31,17 @@ class ApiService {
     );
   }
 
-  // ============================================================
-  // ✅ DRIVER ETA API (NEW)
-  // ============================================================
+  // EXTERNAL GET REQUEST (Google APIs etc)
+  static Future<http.Response> getExternal(String url) async {
+    return http.get(
+      Uri.parse(url),
+      headers: {
+        "ngrok-skip-browser-warning": "true",
+      },
+    );
+  }
+
+  // DRIVER ETA API
   static Future<Map<String, dynamic>?> getDriverEta({
     required String busId,
     required double originLat,
@@ -51,21 +61,18 @@ class ApiService {
         "nextStop": nextStop,
       },
     );
-
     print("📡 ETA URL: $uri");
 
     final response = await http.get(
       uri,
       headers: headers,
     );
-
     print("📡 ETA Status: ${response.statusCode}");
 
     if (response.statusCode != 200) {
       print("❌ ETA Failed: ${response.body}");
       return null;
     }
-
     return jsonDecode(response.body);
   }
 }

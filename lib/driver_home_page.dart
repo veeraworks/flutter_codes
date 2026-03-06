@@ -135,12 +135,16 @@ class _DriverHomePageState extends State<DriverHomePage>
       });
 
       if (tripStarted && busId != null) {
+
         final service = FlutterBackgroundService();
 
-        if (!(await service.isRunning())) {
-          service.startService();
+        bool running = await service.isRunning();
+
+        if (!running) {
+          await service.startService();
         }
-        FlutterBackgroundService().invoke("setBusId", {
+
+        service.invoke("setBusId", {
           "busId": busId
         });
       }
@@ -314,7 +318,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     positionStream = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 5,
+        distanceFilter: 10,
       ),
     ).listen((position) {
 
@@ -433,11 +437,29 @@ class _DriverHomePageState extends State<DriverHomePage>
         return;
       }
 
-      Map<String, dynamic> data = jsonDecode(response.body ?? "{}");
+      Map<String, dynamic> data = {};
 
-      currentTripId = data["tripId"]?.toString();
+      try {
+        data = jsonDecode(response.body);
+      } catch (e) {
+        print("JSON decode failed");
+      }
+      print("TripId received → ${data["tripId"]}");
 
-      // Update UI
+// If backend returned tripId
+      if (data["tripId"] != null) {
+        currentTripId = data["tripId"].toString();
+      }
+
+// If backend did not return tripId (trip already active)
+      if (currentTripId == null) {
+        final prefs = await SharedPreferences.getInstance();
+        currentTripId = prefs.getString("activeTripId");
+      }
+
+      print("Current TripId → $currentTripId");
+
+// Update UI
       if (mounted) {
         setState(() {
           tripStarted = true;
@@ -492,36 +514,57 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   //==================== END TRIP WITH MODE (NEW) =================
   Future<void> _endTripFromBackend() async {
-    if (busId == null || currentTripId == null) return;
-
     final prefs = await SharedPreferences.getInstance();
 
-    // 🔥 CLEAR LOCAL TRIP DATA
-    await prefs.setBool("trackingActive", false);
-    await prefs.remove("activeTripId");
-    await prefs.remove("tripMode");
+    String? tripId = currentTripId ?? prefs.getString("activeTripId");
 
-    final response = await ApiService.post(
-      "/drivers/end-trip",
-      {
-        "busId": busId,
-        "tripId": currentTripId,
-      },
-    );
+    print("END TRIP busId = $busId");
+    print("END TRIP tripId = $tripId");
 
-    await positionStream?.cancel();
-    FlutterBackgroundService().invoke("stopService");
-    setState(() {
-      tripStarted = false;
-      currentTripId = null;
-      tripEnding = false;
-    });
+    if (busId == null || tripId == null) {
+      print("❌ End trip failed. Missing trip data.");
+      return;
+    }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Trip Ended")),
-    );
+    tripEnding = true;
+
+    try {
+      final response = await ApiService.post(
+        "/drivers/end-trip",
+        {
+          "busId": busId,
+          "tripId": tripId,
+        },
+      );
+
+      print("END TRIP RESPONSE → ${response.body}");
+
+      // 🔥 CLEAR LOCAL DATA
+      await prefs.setBool("trackingActive", false);
+      await prefs.remove("activeTripId");
+      await prefs.remove("tripMode");
+
+      await positionStream?.cancel();
+
+      FlutterBackgroundService().invoke("stopService");
+
+      if (!mounted) return;
+
+      setState(() {
+        tripStarted = false;
+        currentTripId = null;
+        tripEnding = false;
+        _routePoints.clear();
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Trip Ended")),
+      );
+
+    } catch (e) {
+      print("❌ End Trip Error → $e");
+    }
   }
-
   Future<void> _refreshDriverProfile() async {
     final prefs = await SharedPreferences.getInstance();
     final phone = prefs.getString("phone");
@@ -536,16 +579,16 @@ class _DriverHomePageState extends State<DriverHomePage>
     final data = jsonDecode(response.body);
 
     // 🔥 SAVE UPDATED VALUES
-    await prefs.setString("driverName", data["name"]);
-    await prefs.setString("busId", data["busId"]);
-    await prefs.setString("busNumber", data["busId"]);
-    await prefs.setString("routeName", data["busName"]);
+    await prefs.setString("driverName", data["name"] ?? "-");
+    await prefs.setString("busId", data["busId"] ?? "-");
+    await prefs.setString("busNumber", data["busNumber"] ?? data["busId"] ?? "-");
+    await prefs.setString("routeName", data["busName"] ?? "-");
+    await prefs.setString("licenseNo", data["licenseNo"] ?? "-");
     await prefs.setString("shift", data["shift"] ?? "-");
 
     setState(() {
-      permBusNumber = data["busId"];
-      permRouteName = data["busName"];
-      busId = data["busId"];
+      permBusNumber = data["busNumber"] ?? data["busId"] ?? "-";
+      permRouteName = data["busName"] ?? "-";
       permBusId = data["busId"];
       shift = _getShiftByTime();
     });
@@ -766,7 +809,7 @@ class _DriverHomePageState extends State<DriverHomePage>
                     ? _animatedActionButton(
                   text: "End Trip",
                   color: Colors.red,
-                  onTap: _endTripFromBackend,
+                  onTap: tripEnding ? () {} : _endTripFromBackend,
                 )
                     : Column(
                   children: [

@@ -9,6 +9,7 @@ import 'package:firebase_core/firebase_core.dart';
 String? activeBusId;
 double _lastSpeed = 0;
 
+/// INITIALIZE BACKGROUND SERVICE
 Future<void> initializeService() async {
   final service = FlutterBackgroundService();
 
@@ -16,97 +17,103 @@ Future<void> initializeService() async {
     androidConfiguration: AndroidConfiguration(
       onStart: onStart,
       autoStart: false,
+      autoStartOnBoot: true,
       isForegroundMode: true,
       notificationChannelId: 'bus_tracking_channel',
       initialNotificationTitle: 'Smart Bus Tracking',
       initialNotificationContent: 'Tracking bus location...',
       foregroundServiceNotificationId: 999,
     ),
-    iosConfiguration: IosConfiguration(),
+    iosConfiguration: IosConfiguration(
+      autoStart: false,
+      onForeground: onStart,
+      onBackground: onIosBackground,
+    ),
   );
 }
 
+/// iOS BACKGROUND HANDLER
+@pragma('vm:entry-point')
+Future<bool> onIosBackground(ServiceInstance service) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  return true;
+}
+
+/// SERVICE START
 @pragma('vm:entry-point')
 Future<void> onStart(ServiceInstance service) async {
 
-  /// 🔥 REQUIRED FOR BACKGROUND ISOLATE
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
 
+  final db = FirebaseDatabase.instance.ref();
+
+  /// FOREGROUND NOTIFICATION FOR ANDROID
   if (service is AndroidServiceInstance) {
+
+    service.setAsForegroundService();
+
     service.setForegroundNotificationInfo(
       title: "Smart Bus Tracking",
       content: "Tracking bus location...",
     );
   }
 
-  /// 🔵 RECEIVE BUS ID FROM DRIVER APP
+  /// RECEIVE BUS ID FROM DRIVER APP
   service.on("setBusId").listen((event) {
     activeBusId = event?["busId"]?.toString().toUpperCase();
     print("🔥 Background busId updated → $activeBusId");
   });
 
-  /// 🔴 STOP SERVICE WHEN TRIP ENDS
+  /// STOP SERVICE EVENT
   service.on("stopService").listen((event) {
     print("🛑 Background service stopping...");
     service.stopSelf();
   });
 
-  /// 🟢 LOCATION LOOP
+  /// LOCATION UPDATE LOOP
   Timer.periodic(const Duration(seconds: 8), (timer) async {
 
     if (service is AndroidServiceInstance) {
-      if (!(await service.isForegroundService())) {
+      if (!await service.isForegroundService()) {
         timer.cancel();
         return;
       }
     }
 
-    if (activeBusId == null) return;
-
     try {
 
-      /// 🔹 CHECK GPS SERVICE
-      bool gpsEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!gpsEnabled) {
-        print("❌ GPS disabled");
-        return;
-      }
+      if (activeBusId == null) return;
 
-      /// 🔹 CHECK LOCATION PERMISSION
+      bool gpsEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!gpsEnabled) return;
+
       LocationPermission permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
 
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
-        print("❌ Location permission denied");
         return;
       }
 
-      /// 🔹 GET CURRENT POSITION
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
       );
-
-      /// ================= SPEED STABILIZATION =================
 
       double realSpeed = position.speed;
 
-      // remove GPS noise
-      if (realSpeed < 0.5) {
-        realSpeed = 0;
-      }
+      if (realSpeed < 0.5) realSpeed = 0;
 
-      // smoothing
       realSpeed = (_lastSpeed * 0.7) + (realSpeed * 0.3);
-
-      // round to 1 decimal
       realSpeed = double.parse(realSpeed.toStringAsFixed(1));
 
       _lastSpeed = realSpeed;
 
-      print("📡 BG UPDATE → Bus:$activeBusId | Speed:$realSpeed m/s");
-
-      /// 🔹 UPDATE FIREBASE
       await FirebaseDatabase.instance
           .ref("buses/$activeBusId/current")
           .update({

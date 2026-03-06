@@ -71,8 +71,13 @@ class _DriverLoginPageState extends State<DriverLoginPage>
         },
       ).timeout(const Duration(seconds: 8));
 
-      final data = jsonDecode(response.body);
+      Map<String, dynamic> data = {};
 
+      try {
+        data = jsonDecode(response.body);
+      } catch (e) {
+        print("JSON parse error: $e");
+      }
       if (response.statusCode == 200 && data["driver"] != null) {
 
         final driver = data["driver"];
@@ -81,10 +86,11 @@ class _DriverLoginPageState extends State<DriverLoginPage>
         await prefs.setString("busId", driver["busId"] ?? "");
         await prefs.setString("permBusId", driver["busId"] ?? "");
         await prefs.setString("busNumber", driver["busNumber"] ?? "");
-        await prefs.setString("routeName", driver["routeName"] ?? "");
+        await prefs.setString("routeName", driver["busName"] ?? "");
         await prefs.setString("shift", driver["shift"] ?? "");
 
         await prefs.setString("driverName", driver["name"] ?? "");
+        await prefs.setString("licenseNo", driver["licenseNo"] ?? "");
         await prefs.setString("phone", phone);
 
         await prefs.setBool("isLoggedIn", true);
