@@ -8,7 +8,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'dart:math';
-const String googleKey = "AIzaSyAeAYcObFrWvXkt3HEGutI7W6Pp7MOWv2k";
 
 class KalmanLatLng {
   double q = 0.00001;
@@ -763,64 +762,6 @@ class _DriverMapPageState extends State<DriverMapPage> {
     } catch (e) {
       print("Route fetch error: $e");
     }
-  }
-// ================= ROUTE POLYLINE LISTENER =================
-
-  Future<void> _generateDynamicRoute() async {
-
-    if (_driverLocation == null || _nextStopName == null) return;
-
-    final nextStop = _routeStops.firstWhere(
-          (s) => s["stopName"] == _nextStopName,
-      orElse: () => {},
-    );
-
-    if (nextStop.isEmpty) return;
-
-    LatLng destination = LatLng(
-      (nextStop["lat"] as num).toDouble(),
-      (nextStop["lng"] as num).toDouble(),
-    );
-
-    String url =
-        "https://maps.googleapis.com/maps/api/directions/json"
-        "?origin=${_driverLocation!.latitude},${_driverLocation!.longitude}"
-        "&destination=${destination.latitude},${destination.longitude}"
-        "&mode=driving"
-        "&key=$googleKey";
-
-    final response = await ApiService.getExternal(url);
-
-    if (response.statusCode != 200) return;
-
-    final data = jsonDecode(response.body);
-
-    if (data["routes"] == null || data["routes"].isEmpty) return;
-
-    String encoded = data["routes"][0]["overview_polyline"]["points"];
-
-    PolylinePoints polylinePoints = PolylinePoints();
-
-    List<PointLatLng> decoded =
-    polylinePoints.decodePolyline(encoded);
-
-    List<LatLng> points =
-    decoded.map((p) => LatLng(p.latitude, p.longitude)).toList();
-
-    setState(() {
-
-      _polylines.removeWhere(
-              (p) => p.polylineId.value == "dynamicRoute");
-
-      _polylines.add(
-        Polyline(
-          polylineId: const PolylineId("dynamicRoute"),
-          points: points,
-          width: 7,
-          color: Colors.grey,
-        ),
-      );
-    });
   }
 
   Future<void> _listenRoutePolyline() async {

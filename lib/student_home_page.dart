@@ -9,6 +9,7 @@ import 'main.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'service/api_service.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -120,23 +121,20 @@ class _StudentHomePageState extends State<StudentHomePage>
   Future<void> _loadRoutePolyline(String busId) async {
 
     final snapshot = await FirebaseDatabase.instance
-        .ref("routes/$busId/polyline")
+        .ref("busRoutes/$busId/fullRoadPolyline")
         .get();
 
     if (!snapshot.exists) return;
 
-    final data = snapshot.value as List;
+    String encodedPolyline = snapshot.value.toString();
 
-    List<LatLng> points = [];
+    PolylinePoints polylinePoints = PolylinePoints();
 
-    for (var p in data) {
-      points.add(
-        LatLng(
-          p["lat"].toDouble(),
-          p["lng"].toDouble(),
-        ),
-      );
-    }
+    List<PointLatLng> decoded =
+    polylinePoints.decodePolyline(encodedPolyline);
+
+    List<LatLng> points =
+    decoded.map((p) => LatLng(p.latitude, p.longitude)).toList();
 
     setState(() {
       _routePoints = points;
