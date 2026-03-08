@@ -60,7 +60,7 @@ class _TemporaryBusChangePageState
       currentBus = savedBus;
       currentRoute = savedRoute;
       selectedRoute = savedRoute;
-      selectedBus = savedBus;
+      selectedBus = savedBus == currentBus ? "" : savedBus;
     });
 
     if (!prefs.containsKey("originalBusNumber")) {
@@ -304,7 +304,7 @@ class _TemporaryBusChangePageState
                   const SizedBox(height: 12),
 
                   DropdownButtonFormField<String>(
-                    value: selectedBus.isNotEmpty ? selectedBus : null,
+                    value: busNumbers.contains(selectedBus) ? selectedBus : null,
                     items: busNumbers
                         .where((bus) => bus != currentBus)
                         .map((bus) => DropdownMenuItem(
