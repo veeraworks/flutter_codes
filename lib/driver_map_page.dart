@@ -93,16 +93,12 @@ class _DriverMapPageState extends State<DriverMapPage> {
   StreamSubscription<DatabaseEvent>? _polylineListener;
   List<Map<String, dynamic>> _routeStops = [];
   List<LatLng> _routePoints = [];
-  int _currentRouteIndex = 0;
   bool _arrivalTriggered = false;
-  LatLng? _lastRouteUpdate;
-  DateTime? _lastDynamicRouteTime;
   StreamSubscription<DatabaseEvent>? _altRoutesListener;
   List<dynamic> _alternativeRoutes = [];
 
   int _lastSnappedIndex = 0;
 
-  bool _routeFitted = false;
   String? busId;
   bool _firstLocationFix = false;
 
@@ -142,14 +138,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
       },
     );
 
-    _etaTimer?.cancel();
-
-    _etaTimer = Timer.periodic(
-      const Duration(seconds: 20),
-          (_) => _fetchDriverETA(),
-    );
   }
-
 // ================= BUS SMOOTH ANIMATION =================
   Future<void> _animateBus(LatLng newPosition) async {
 
@@ -161,6 +150,12 @@ class _DriverMapPageState extends State<DriverMapPage> {
           _updateDriverMarker();
         });
       }
+
+      // start camera follow
+      _startNavigationCamera(_driverLocation!);
+
+      // draw route once
+      _updatePolyline();
       return;
     }
 
@@ -188,7 +183,37 @@ class _DriverMapPageState extends State<DriverMapPage> {
       setState(() {
         _updateDriverMarker();
       });
+
+      // camera follow
+      _startNavigationCamera(_driverLocation!);
     }
+
+    // ⭐ update polyline once after animation
+    _updatePolyline();
+  }
+
+  void _updatePolyline() {
+
+    if (_routePoints.isEmpty) return;
+
+    List<LatLng> displayPoints = List.from(_routePoints);
+
+    // insert bus location at beginning
+    if (_driverLocation != null) {
+      displayPoints.insert(0, _driverLocation!);
+    }
+
+    setState(() {
+      _polylines.clear();
+      _polylines.add(
+        Polyline(
+          polylineId: const PolylineId("route"),
+          points: displayPoints,
+          width: 6,
+          color: Colors.blue,
+        ),
+      );
+    });
   }
   StreamSubscription<Position>? _gpsSubscription;
 
@@ -225,10 +250,14 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
         try {
 
+          // 🔥 REAL GPS LOCATION
           final rawPoint = LatLng(position.latitude, position.longitude);
 
-          // ignore small GPS drift when stopped
+          _realGpsLocation = rawPoint;
+
+          // ignore tiny GPS drift when vehicle stopped
           if (_driverLocation != null && position.speed < 0.5) {
+
             double drift = Geolocator.distanceBetween(
               _driverLocation!.latitude,
               _driverLocation!.longitude,
@@ -239,13 +268,45 @@ class _DriverMapPageState extends State<DriverMapPage> {
             if (drift < 3) return;
           }
 
-          LatLng filteredPoint =
-          _snapToRoute(_gpsKalman.process(rawPoint));
+          // 🔥 USE REAL LOCATION (NO ROUTE SNAPPING)
+          LatLng displayPoint = _gpsKalman.process(rawPoint);
 
-          _realGpsLocation = rawPoint;
+          // FIRST GPS FIX
+          if (_driverLocation == null) {
 
-          await _animateBus(filteredPoint);
+            _driverLocation = displayPoint;
 
+            if (mounted) {
+              setState(() {
+                _updateDriverMarker();
+              });
+            }
+
+            print("✅ Driver location initialized: $_driverLocation");
+
+            // START ETA TIMER
+            if (!_firstLocationFix) {
+
+              _firstLocationFix = true;
+
+              _fetchDriverETA();
+
+              _etaTimer = Timer.periodic(
+                const Duration(seconds: 20),
+                    (_) => _fetchDriverETA(),
+              );
+
+              print("🚀 ETA timer started");
+            }
+          }
+
+          // 🔥 BUS MOVES EXACTLY WITH DRIVER
+          await _animateBus(displayPoint);
+
+          _checkStopArrival();
+          _updateStepDistance();
+
+          // UPDATE HEADING
           double newHeading = position.heading;
 
           if (!newHeading.isNaN && newHeading >= 0) {
@@ -253,7 +314,9 @@ class _DriverMapPageState extends State<DriverMapPage> {
                 _driverBearing + (newHeading - _driverBearing) * 0.2;
           }
 
+          // SPEED
           _currentSpeed = position.speed;
+
           if (_currentSpeed < 0.3) {
             _currentSpeed = 0;
           }
@@ -261,8 +324,8 @@ class _DriverMapPageState extends State<DriverMapPage> {
         } catch (e) {
           print("GPS processing error: $e");
         }
-      },
 
+      },
       onError: (error) {
         print("GPS stream error: $error");
       },
@@ -765,20 +828,24 @@ class _DriverMapPageState extends State<DriverMapPage> {
   }
 
   Future<void> _listenRoutePolyline() async {
+
     if (busId == null) return;
 
     _polylineListener?.cancel();
 
     _polylineListener = FirebaseDatabase.instance
-        .ref("busRoutes/$busId/fullRoadPolyline")
+        .ref("busRoutes/$busId/navigationPolyline")
         .onValue
         .listen((event) {
 
       final data = event.snapshot.value;
 
+      print("Polyline snapshot = $data");
+
       if (data == null) return;
 
       String encodedPolyline = data.toString();
+
       if (encodedPolyline.isEmpty) return;
 
       PolylinePoints polylinePoints = PolylinePoints();
@@ -786,31 +853,24 @@ class _DriverMapPageState extends State<DriverMapPage> {
       List<PointLatLng> decoded =
       polylinePoints.decodePolyline(encodedPolyline);
 
+      print("Decoded polyline points = ${decoded.length}");
+
       List<LatLng> points =
       decoded.map((p) => LatLng(p.latitude, p.longitude)).toList();
 
-      setState(() {
-        _routePoints = points;
+      _routePoints = points;
 
-        _polylines.removeWhere(
-              (p) => p.polylineId.value == "route",
-        );
+      _updatePolyline();
 
-        _polylines.add(
-          Polyline(
-            polylineId: const PolylineId("route"),
-            points: points,
-            width: 6,
-            color: Colors.blue,
-          ),
-        );
-      });
+      if (_mapController != null) {
+        _fitRouteToScreen(points);
+      }
 
-      print("Polyline data = $data");
+      print("Polyline loaded");
       print("Decoded count = ${decoded.length}");
-
     });
   }
+
   Future<void> _listenAlternativeRoutes() async {
 
     if (busId == null) return;
@@ -1040,7 +1100,6 @@ class _DriverMapPageState extends State<DriverMapPage> {
             onMapCreated: (controller) async {
               _mapController = controller;
               await _fetchRouteStops();   // ✅ ONLY HERE
-              _fetchDriverETA();  // ✅ trigger first ETA after stops loaded
             },
             myLocationEnabled: false,
             myLocationButtonEnabled: false,
