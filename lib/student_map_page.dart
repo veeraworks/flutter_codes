@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:firebase_database/firebase_database.dart';
@@ -99,6 +100,8 @@ class _MapPageState extends State<MapPage> {
 
   String? busId;
   String? stopName;
+  String? _mapStyle;
+  String? _busStatus;
 
   Timer? _predictiveTimer;
   LatLng? _predictedPosition;
@@ -111,6 +114,7 @@ class _MapPageState extends State<MapPage> {
   void initState() {
     super.initState();
     _initAll();
+    _loadMapStyle();
   }
 
   Future<void> _initAll() async {
@@ -118,7 +122,7 @@ class _MapPageState extends State<MapPage> {
 
     if (busId != null) {
       await FirebaseMessaging.instance
-          .subscribeToTopic(busId!.toLowerCase());
+          .subscribeToTopic("route_${busId!.toUpperCase()}");
       print("✅ Subscribed to route_$busId");
     }
 
@@ -162,6 +166,9 @@ class _MapPageState extends State<MapPage> {
     setState(() {
       _busMarker = marker;
     });
+  }
+  Future<void> _loadMapStyle() async {
+    _mapStyle = await rootBundle.loadString("assets/map_style.json");
   }
 
   void _startCountdown(int seconds) {
@@ -422,7 +429,7 @@ class _MapPageState extends State<MapPage> {
     }
 
     _busListener = FirebaseDatabase.instance
-        .ref("buses/$busId/current")
+        .ref("buses/$busId")
         .onValue
         .listen((event) {
 
@@ -431,12 +438,39 @@ class _MapPageState extends State<MapPage> {
       final data = event.snapshot.value;
       if (data == null) return;
 
-      final map = Map<String, dynamic>.from(data as Map);
+      final root = Map<String, dynamic>.from(data as Map);
+      String? busStatus;
+
+      if (root["status"] != null) {
+        busStatus = root["status"].toString();
+      }
+
+      if (busStatus != null) {
+        setState(() {
+          _busStatus = busStatus;
+        });
+      }
+
+      Map<String, dynamic>? source;
+
+// ⭐ use smooth first
+      if (root["smooth"] != null) {
+        source = Map<String, dynamic>.from(root["smooth"]);
+      }
+
+// ⭐ fallback to current
+      else if (root["current"] != null) {
+        source = Map<String, dynamic>.from(root["current"]);
+      }
+
+      if (source == null) return;
 
       LatLng newPos = LatLng(
-        (map["lat"] as num).toDouble(),
-        (map["lng"] as num).toDouble(),
+        (source["lat"] as num).toDouble(),
+        (source["lng"] as num).toDouble(),
       );
+
+      double bearing = (source["bearing"] ?? 0).toDouble();
 
       if (_previousBusLocation != null) {
         double move = Geolocator.distanceBetween(
@@ -475,7 +509,6 @@ class _MapPageState extends State<MapPage> {
       _lastGpsTime = now;
 
       // ===== ROTATION =====
-      double bearing = (map["bearing"] ?? 0).toDouble();
       _smoothRotate(bearing);
 
       LatLng snappedPos;
@@ -577,21 +610,14 @@ class _MapPageState extends State<MapPage> {
               Polyline(
                 polylineId: const PolylineId("route"),
                 points: remaining,
-                width: 6,
+                width: 8,
                 color: Colors.blue,
               ),
             };
           });
 
+          _animateBus(snappedPos, bearing);
           _startPredictiveMotion(snappedPos, bearing);
-
-          if (_roadPath.isNotEmpty) {
-            if (!(_roadAnimationTimer?.isActive ?? false)) {
-              _animateBusAlongRoad(bearing);
-            }
-          } else {
-            _animateBus(snappedPos, bearing);
-          }
           _startCinematicCamera(snappedPos);
         }
       }
@@ -602,7 +628,7 @@ class _MapPageState extends State<MapPage> {
       _previousBusLocation = newPosition;
     }
 
-    const duration = 1500;
+    const duration = 500;
     const frame = 16;
     int steps = duration ~/ frame;
     int step = 0;
@@ -690,7 +716,7 @@ class _MapPageState extends State<MapPage> {
           Polyline(
             polylineId: const PolylineId("route"),
             points: points,   // show full route
-            width: 6,
+            width: 8,
             color: Colors.blue,
           ),
         };
@@ -895,15 +921,7 @@ class _MapPageState extends State<MapPage> {
     }
 
     try {
-      final url =
-          "/drivers/eta"
-          "?originLat=${_busLocation!.latitude}"
-          "&originLng=${_busLocation!.longitude}"
-          "&destLat=${_studentStopLocation!.latitude}"
-          "&destLng=${_studentStopLocation!.longitude}"
-          "&busId=$busId"
-          "&nextStop=${_nextStopName ?? ""}";
-
+      final url = "/eta/$busId";
       final response =
       await ApiService.get(url)
           .timeout(const Duration(seconds: 8));
@@ -990,6 +1008,10 @@ class _MapPageState extends State<MapPage> {
             ),
             onMapCreated: (controller) {
               _mapController = controller;
+
+              if (_mapStyle != null) {
+                _mapController!.setMapStyle(_mapStyle);
+              }
             },
             myLocationEnabled: true,
             markers: {
@@ -999,6 +1021,28 @@ class _MapPageState extends State<MapPage> {
             },
             polylines: _polylines,
           ),
+
+          if (_busStatus == "OFFLINE")
+            Positioned(
+              top: 60,
+              left: 20,
+              right: 20,
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.redAccent,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Text(
+                  "⚠️ Bus temporarily offline\nLocation updating...",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
 
           if (_etaSeconds != null)
             Positioned(
