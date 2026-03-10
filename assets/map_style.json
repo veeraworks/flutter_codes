@@ -1,18 +1,14 @@
 [
   {
-    "featureType": "poi",
+    "featureType": "poi.business",
     "stylers": [{"visibility": "off"}]
   },
   {
-    "featureType": "transit",
+    "featureType": "transit.station",
     "stylers": [{"visibility": "off"}]
   },
   {
     "featureType": "administrative",
-    "stylers": [{"visibility": "off"}]
-  },
-  {
-    "featureType": "road",
     "elementType": "labels",
     "stylers": [{"visibility": "off"}]
   }

@@ -531,7 +531,6 @@ class _MapPageState extends State<MapPage> {
         }
       }
       _busLocation = snappedPos;
-      _previousBusLocation = snappedPos;
       // calculate distance from student
       if (_studentStopLocation != null) {
         _distanceToBus = Geolocator.distanceBetween(
@@ -602,8 +601,12 @@ class _MapPageState extends State<MapPage> {
           }
           _lastRouteIndex = closestIndex;
 
-          List<LatLng> remaining = _routePoints.sublist(closestIndex);
-          remaining = [ _busLocation!, ...remaining ];
+          LatLng snappedRoutePoint = _routePoints[closestIndex];
+
+          List<LatLng> remaining = [
+            snappedRoutePoint,
+            ..._routePoints.sublist(closestIndex + 1)
+          ];
 
           setState(() {
             _polylines = {
@@ -617,7 +620,6 @@ class _MapPageState extends State<MapPage> {
           });
 
           _animateBus(snappedPos, bearing);
-          _startPredictiveMotion(snappedPos, bearing);
           _startCinematicCamera(snappedPos);
         }
       }
@@ -1009,9 +1011,7 @@ class _MapPageState extends State<MapPage> {
             onMapCreated: (controller) {
               _mapController = controller;
 
-              if (_mapStyle != null) {
                 _mapController!.setMapStyle(_mapStyle);
-              }
             },
             myLocationEnabled: true,
             markers: {
