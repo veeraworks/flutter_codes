@@ -6,58 +6,96 @@ class AboutAppPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF4F6FA),
+
       appBar: AppBar(
+        elevation: 0,
         title: const Text("About App"),
+        centerTitle: true,
         backgroundColor: const Color(0xFF00BFA6),
         foregroundColor: Colors.white,
       ),
-      backgroundColor: const Color(0xFFF6F3F7),
 
       body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
 
-          child: Column(
-            children: [
-
-              const SizedBox(height: 30),
-
-              const Icon(
-                Icons.directions_bus_filled,
-                size: 80,
+            /// HEADER
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 40),
+              decoration: const BoxDecoration(
                 color: Color(0xFF00BFA6),
-              ),
-
-              const SizedBox(height: 20),
-
-              const Text(
-                "Smart Bus Tracking Management",
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
+                borderRadius: BorderRadius.only(
+                  bottomLeft: Radius.circular(30),
+                  bottomRight: Radius.circular(30),
                 ),
               ),
 
-              const SizedBox(height: 8),
+              child: Column(
+                children: [
 
-              const Text(
-                "Version 1.0.0",
-                style: TextStyle(color: Colors.black54),
+                  /// BUS ICON
+                  Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black26,
+                          blurRadius: 10,
+                        )
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.directions_bus_filled,
+                      size: 50,
+                      color: Color(0xFF00BFA6),
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  const Text(
+                    "Smart Bus Tracking",
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+
+                  const SizedBox(height: 6),
+
+                  const Text(
+                    "Version 1.0.0",
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
               ),
+            ),
 
-              const SizedBox(height: 30),
+            const SizedBox(height: 30),
 
-              /// INFO CARD
-              Container(
-                padding: const EdgeInsets.all(18),
+            /// INFO CARD
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+
+              child: Container(
+                padding: const EdgeInsets.all(20),
+
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(20),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 10,
+                      color: Colors.black.withOpacity(0.08),
+                      blurRadius: 15,
+                      offset: const Offset(0, 6),
                     )
                   ],
                 ),
@@ -65,57 +103,63 @@ class AboutAppPage extends StatelessWidget {
                 child: Column(
                   children: [
 
-                    _infoRow("Institution", "Sairam Institutions"),
+                    _infoRow(Icons.school, "Institution", "Sairam Institutions"),
                     const Divider(),
 
-                    _infoRow("System", "Real-Time Bus Tracking"),
+                    _infoRow(Icons.gps_fixed, "System", "Real-Time Bus Tracking"),
                     const Divider(),
 
-                    _infoRow("Temporary Bus Support", "Available"),
+                    _infoRow(Icons.directions_bus, "Temporary Bus", "Available"),
                     const Divider(),
 
-                    _infoRow("Trip Monitoring", "Morning / Evening"),
+                    _infoRow(Icons.schedule, "Trip Monitoring", "Morning / Evening"),
                     const Divider(),
 
-                    _infoRow("Notifications", "Trip Alerts"),
+                    _infoRow(Icons.notifications_active, "Notifications", "Trip Alerts"),
 
                   ],
                 ),
               ),
+            ),
 
-              const SizedBox(height: 40),
+            const SizedBox(height: 40),
 
-              const Text(
-                "© 2026 Smart Bus Tracking",
-                style: TextStyle(
-                  color: Colors.black45,
-                  fontSize: 12,
-                ),
+            const Text(
+              "© 2026 Smart Bus Tracking",
+              style: TextStyle(
+                color: Colors.black45,
+                fontSize: 12,
               ),
+            ),
 
-              const SizedBox(height: 10),
-
-            ],
-          ),
+            const SizedBox(height: 20),
+          ],
         ),
       ),
     );
   }
 
-  static Widget _infoRow(String title, String value) {
+  static Widget _infoRow(IconData icon, String title, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(vertical: 12),
 
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-
         children: [
 
-          Text(
-            title,
-            style: const TextStyle(
-              color: Colors.black54,
-              fontSize: 15,
+          Icon(
+            icon,
+            color: const Color(0xFF00BFA6),
+          ),
+
+          const SizedBox(width: 12),
+
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(
+                fontSize: 15,
+                color: Colors.black54,
+              ),
             ),
           ),
 

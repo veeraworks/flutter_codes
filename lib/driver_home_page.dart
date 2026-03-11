@@ -13,6 +13,7 @@ import 'driver_profile_page.dart';
 import 'driver_settings_page.dart';
 import 'issue_reporting_page.dart';
 import 'driver_map_page.dart';
+import 'utils/app_logger.dart';
 
 class DriverHomePage extends StatefulWidget {
   const DriverHomePage({super.key});
@@ -32,6 +33,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   String routeName = "-";
   String shift = "-";
   bool isTempBusActive = false;
+  String driverName = "Driver";
 
   // NEW: keep permanent and temporary values separate
   String permBusNumber = "-";
@@ -39,7 +41,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? tempBusNumber;
   String? tempRouteName;
   double _lastSpeed = 0;
-
+  DateTime? tripStartTime;
   Timer? _gpsCheckTimer;
   bool gpsOn = false;
   bool internetOn = false;
@@ -61,13 +63,57 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   // 🗺️ MAP STATE
   GoogleMapController? _mapController;
-  Marker? _driverMarker;
-  LatLng _currentLatLng = const LatLng(13.0827, 80.2707);
 
   // 🧵 ROUTE POLYLINE STATE
   final List<LatLng> _routePoints = [];
 
   // ✅ SHIFT FUNCTION (MOVE HERE)
+  String? _pickText(dynamic value) {
+    if (value == null) return null;
+    final text = value.toString().trim();
+    if (text.isEmpty || text == "-") return null;
+    return text;
+  }
+
+  Map<String, dynamic> _extractProfile(Map<String, dynamic> data) {
+    if (data["driver"] is Map) {
+      return Map<String, dynamic>.from(data["driver"] as Map);
+    }
+    return data;
+  }
+
+  Future<Map<String, dynamic>?> _fetchDriverProfileByPhone(String phone) async {
+    final encodedPhone = Uri.encodeQueryComponent(phone);
+    final endpoints = [
+      "/auth/driver-profile/$phone",
+      "/auth/driver-profile?phone=$encodedPhone",
+      "/auth/profile?phone=$encodedPhone",
+      "/drivers/profile?phone=$encodedPhone",
+      "/profile?phone=$encodedPhone",
+    ];
+    Map<String, dynamic>? fallbackProfile;
+
+    for (final endpoint in endpoints) {
+      final response = await ApiService.get(endpoint);
+      appLog("Driver profile fetch $endpoint -> ${response.statusCode}");
+      if (response.statusCode != 200) continue;
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) continue;
+
+      final profile = _extractProfile(decoded);
+      final hasBusId = _pickText(profile["busId"]) != null;
+      final hasRoute = _pickText(profile["busName"]) != null ||
+          _pickText(profile["routeName"]) != null ||
+          _pickText(profile["route"]) != null;
+
+      if (hasBusId && hasRoute) return profile;
+      if (hasBusId) fallbackProfile = profile;
+    }
+
+    return fallbackProfile;
+  }
+
   String _getShiftByTime() {
     final now = DateTime.now();
     final hour = now.hour;
@@ -180,20 +226,24 @@ class _DriverHomePageState extends State<DriverHomePage>
     final prefs = await SharedPreferences.getInstance();
 
     setState(() {
-      // Permanent
+      driverName = prefs.getString("driverName") ?? "Driver";
       permBusNumber = prefs.getString("busNumber") ?? "-";
-      permRouteName = prefs.getString("routeName") ?? "-";
+      permRouteName =
+      ((prefs.getString("routeName")?.isNotEmpty ?? false) &&
+          prefs.getString("routeName") != "-")
+          ? prefs.getString("routeName")!.trim()
+          : "Not Assigned";
       shift = _getShiftByTime();
-      // Temporary
+
       isTempBusActive = prefs.getBool("isTempBusActive") ?? false;
       tempBusNumber = prefs.getString("tempBusNumber");
       tempRouteName = prefs.getString("tempRouteName");
     });
 
-    print("Permanent → $permBusNumber | $permRouteName");
-    print("Temporary Active → $isTempBusActive");
+    appLog("Route loaded → $permRouteName");
+
   }
-//===================== LISTEN TO TEMPORARY BUS CHANGES ==========================
+  //================ LISTEN TO TEMPORARY BUS CHANGES ==========================
   Future<void> _listenToTemporaryBus() async {
     final prefs = await SharedPreferences.getInstance();
     final permId = prefs.getString("busId");
@@ -297,7 +347,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _startLocationUpdates() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      print("GPS SERVICE DISABLED");
+      appLog("GPS SERVICE DISABLED");
       return;
     }
 
@@ -309,7 +359,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
-      print("LOCATION PERMISSION DENIED");
+      appLog("LOCATION PERMISSION DENIED");
       return;
     }
 
@@ -322,11 +372,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       ),
     ).listen((position) {
 
-      print("GPS UPDATE → ${position.latitude}, ${position.longitude}");
-      print("RAW SPEED → ${position.speed} m/s");
+      appLog("GPS UPDATE → ${position.latitude}, ${position.longitude}");
+      appLog("RAW SPEED → ${position.speed} m/s");
 
       if (!tripStarted) {
-        print("GPS running but trip not started");
+        appLog("GPS running but trip not started");
         return;
       }
 
@@ -348,21 +398,13 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       _lastSpeed = realSpeed;
 
-      print("SMOOTHED SPEED → $realSpeed m/s");
+      appLog("SMOOTHED SPEED → $realSpeed m/s");
 
       // ================= UI UPDATE =================
       if (!mounted) return;
 
       setState(() {
-        _currentLatLng = latLng;
 
-        _driverMarker = Marker(
-          markerId: const MarkerId("driver"),
-          position: latLng,
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueGreen,
-          ),
-        );
 
         if (_routePoints.isEmpty ||
             Geolocator.distanceBetween(
@@ -390,25 +432,40 @@ class _DriverHomePageState extends State<DriverHomePage>
           "speed": realSpeed, // 🔥 stable speed
           "updatedAt": ServerValue.timestamp,
         }).catchError((e) {
-          print("Failed to update bus location: $e");
+          appLog("Failed to update bus location: $e");
         });
       }
     });
   }
   //==================== START TRIP WITH MODE (NEW) =================
   Future<void> _startTripWithMode(String mode) async {
-    if (busId == null) {
+
+    // Prevent double start
+    if (tripStarted) {
       if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Trip already running")),
+      );
+      return;
+    }
+
+    // Validate bus ID
+    if (busId == null || busId!.isEmpty) {
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Bus ID not found")),
       );
       return;
     }
 
+    // Check GPS + Internet
     await _checkStatuses();
 
     if (!gpsOn || !internetOn) {
       if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Enable GPS & Internet first")),
       );
@@ -416,6 +473,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     try {
+
+      appLog("🚍 Starting trip for bus → $busId");
+
       final response = await ApiService.post(
         "/drivers/start-trip",
         {
@@ -424,55 +484,60 @@ class _DriverHomePageState extends State<DriverHomePage>
         },
       );
 
-      print("START TRIP RESPONSE → ${response.body}");
+      appLog("START TRIP RESPONSE → ${response.body}");
 
       if (response.statusCode != 200) {
+
         if (!mounted) return;
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Failed to start trip")),
         );
+
         return;
       }
 
-      if (response.body.isEmpty) {
-        print("Start trip API returned empty response");
-        return;
-      }
+      // ---------------- PARSE RESPONSE ----------------
 
       Map<String, dynamic> data = {};
 
-      try {
-        data = jsonDecode(response.body);
-      } catch (e) {
-        print("JSON decode failed");
+      if (response.body.isNotEmpty) {
+        try {
+          data = jsonDecode(response.body);
+        } catch (e) {
+          appLog("JSON decode failed → $e");
+        }
       }
-      print("TripId received → ${data["tripId"]}");
 
-// If backend returned tripId
+      // ---------------- GET TRIP ID ----------------
+
       if (data["tripId"] != null) {
         currentTripId = data["tripId"].toString();
       }
 
-// If backend did not return tripId (trip already active)
       if (currentTripId == null) {
         final prefs = await SharedPreferences.getInstance();
         currentTripId = prefs.getString("activeTripId");
       }
 
-      print("Current TripId → $currentTripId");
+      appLog("Current TripId → $currentTripId");
 
-// Update UI
+      // ---------------- UPDATE UI ----------------
+
       if (mounted) {
         setState(() {
           tripStarted = true;
           tripMode = mode;
+          tripStartTime = DateTime.now(); // start timer
         });
       }
 
-      // Start background service
+      // ---------------- START BACKGROUND SERVICE ----------------
+
       final service = FlutterBackgroundService();
 
       bool running = await service.isRunning();
+
       if (!running) {
         await service.startService();
       }
@@ -481,7 +546,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         "busId": busId,
       });
 
-      // Save trip state locally
+      // ---------------- SAVE LOCAL STATE ----------------
+
       final prefs = await SharedPreferences.getInstance();
 
       await prefs.setBool("trackingActive", true);
@@ -492,19 +558,23 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       await prefs.setString("tripMode", mode);
 
-      await _checkStatuses();
+      // ---------------- START GPS TRACKING ----------------
 
-      // Start GPS tracking
       await _startLocationUpdates();
+
+      // ---------------- FINAL CHECK ----------------
+
+      await _checkStatuses();
 
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("$mode trip started")),
+        SnackBar(content: Text("$mode trip started successfully")),
       );
 
     } catch (e) {
-      print("START TRIP ERROR → $e");
+
+      appLog("❌ START TRIP ERROR → $e");
 
       if (!mounted) return;
 
@@ -513,24 +583,28 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     }
   }
-
   //==================== END TRIP WITH MODE (NEW) =================
   Future<void> _endTripFromBackend() async {
+
+    if (tripEnding) return;
+
+    tripEnding = true;
+
     final prefs = await SharedPreferences.getInstance();
 
     String? tripId = currentTripId ?? prefs.getString("activeTripId");
 
-    print("END TRIP busId = $busId");
-    print("END TRIP tripId = $tripId");
+    appLog("🚏 END TRIP busId = $busId");
+    appLog("🚏 END TRIP tripId = $tripId");
 
     if (busId == null || tripId == null) {
-      print("❌ End trip failed. Missing trip data.");
+      appLog("❌ End trip failed. Missing trip data.");
+      tripEnding = false;
       return;
     }
 
-    tripEnding = true;
-
     try {
+
       final response = await ApiService.post(
         "/drivers/end-trip",
         {
@@ -539,69 +613,106 @@ class _DriverHomePageState extends State<DriverHomePage>
         },
       );
 
-      print("END TRIP RESPONSE → ${response.body}");
+      appLog("END TRIP RESPONSE → ${response.body}");
 
-      // 🔥 CLEAR LOCAL DATA
+      // ---------------- STOP GPS ----------------
+
+      await positionStream?.cancel();
+
+      // ---------------- STOP BACKGROUND SERVICE ----------------
+
+      FlutterBackgroundService().invoke("stopService");
+
+      // ---------------- CLEAR LOCAL STORAGE ----------------
+
       await prefs.setBool("trackingActive", false);
       await prefs.remove("activeTripId");
       await prefs.remove("tripMode");
 
-      await positionStream?.cancel();
-
-      FlutterBackgroundService().invoke("stopService");
+      // ---------------- UPDATE UI ----------------
 
       if (!mounted) return;
+
       setState(() {
         tripStarted = false;
-        currentTripId = null;
         tripEnding = false;
+        currentTripId = null;
+        tripStartTime = null;
         _routePoints.clear();
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Trip Ended")),
+        const SnackBar(content: Text("Trip Ended Successfully")),
       );
 
     } catch (e) {
-      print("❌ End Trip Error → $e");
+
+      appLog("❌ End Trip Error → $e");
+
+      tripEnding = false;
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Failed to end trip")),
+      );
     }
   }
+
   Future<void> _refreshDriverProfile() async {
     final prefs = await SharedPreferences.getInstance();
     final phone = prefs.getString("phone");
 
     if (phone == null) return;
 
-    final response =
-    await ApiService.get("/auth/driver-profile/$phone");
+    final profile = await _fetchDriverProfileByPhone(phone);
+    appLog("Driver profile response → $profile");
+    if (profile == null) return;
 
-    if (response.statusCode != 200) return;
+    final resolvedName = _pickText(profile["name"]) ?? "-";
 
-    final data = jsonDecode(response.body);
+    final resolvedBusId = _pickText(profile["busId"]) ?? "-";
 
-    // 🔥 SAVE UPDATED VALUES
-    await prefs.setString("driverName", data["name"] ?? "-");
-    await prefs.setString("busId", data["busId"] ?? "-");
-    await prefs.setString("busNumber", data["busNumber"] ?? data["busId"] ?? "-");
-    await prefs.setString("routeName", data["busName"] ?? "-");
-    await prefs.setString("licenseNo", data["licenseNo"] ?? "-");
-    await prefs.setString("shift", data["shift"] ?? "-");
+    final resolvedBusNumber =
+        _pickText(profile["busNumber"]) ?? resolvedBusId;
+
+    final resolvedRouteName = _pickText(profile["busName"]) ??
+        _pickText(profile["routeName"]) ??
+        _pickText(profile["route"]);
+
+    final resolvedLicense = _pickText(profile["licenseNo"]) ?? "-";
+
+    final resolvedShift = _pickText(profile["shift"]) ?? "-";
+
+    final existingRouteName = _pickText(prefs.getString("routeName"));
+    final finalRouteName =
+        resolvedRouteName ??
+            existingRouteName ??
+            profile["busName"] ??
+            "Not Assigned";
+
+    await prefs.setString("driverName", resolvedName);
+    await prefs.setString("busId", resolvedBusId);
+    await prefs.setString("busNumber", resolvedBusNumber);
+    await prefs.setString("routeName", finalRouteName);
+    await prefs.setString("licenseNo", resolvedLicense);
+    await prefs.setString("shift", resolvedShift);
 
     setState(() {
-      permBusNumber = data["busNumber"] ?? data["busId"] ?? "-";
-      permRouteName = data["busName"] ?? "-";
-      permBusId = data["busId"];
+      permBusNumber = resolvedBusNumber;
+      permRouteName = finalRouteName;
+      permBusId = resolvedBusId;
       shift = _getShiftByTime();
     });
 
-    // 🔥 UPDATE BACKGROUND SERVICE IF TRIP ACTIVE
+    await _loadBusInfo();
+
     if (tripStarted && busId != null) {
       FlutterBackgroundService().invoke("setBusId", {
         "busId": busId,
       });
     }
   }
-
   // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
@@ -705,8 +816,14 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
         ),
 
-        body: SingleChildScrollView(
-          child: Column(
+        body: RefreshIndicator(
+            onRefresh: () async {
+              await _refreshDriverProfile();
+              await _loadBusInfo();
+              await _checkStatuses();
+            },
+            child: SingleChildScrollView(
+              child: Column(
             children: [
               // HEADER
               SlideTransition(
@@ -743,9 +860,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'Driver Dashboard',
-                              style: TextStyle(color: Colors.white, fontSize: 22),
+                            Text(
+                              'Hi, $driverName',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 17,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                             Text(
                               tripStarted
@@ -780,7 +901,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
               if (isTempBusActive)
                 _infoCard(
-                  title: "Temporary Bus Active",
+                  title: "⚠ Temporary Bus Active",
                   titleColor: Colors.orange,
                   children: [
                     _infoRow("Temporary Bus", tempBusNumber ?? "-"),
@@ -830,6 +951,7 @@ class _DriverHomePageState extends State<DriverHomePage>
               ),
             ],
           ),
+         )
         )
     );
   }
@@ -893,6 +1015,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -924,10 +1053,14 @@ class _infoRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: const TextStyle(color: Colors.black54)),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
+
+        Icon(Icons.circle, size: 8, color: Colors.grey),
+        SizedBox(width: 10),
+
+        Expanded(child: Text(label)),
+
+        Text(value),
       ],
     );
   }

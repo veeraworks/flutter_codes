@@ -3,6 +3,7 @@ import 'service/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'utils/app_logger.dart';
 
 class TemporaryBusChangePage extends StatefulWidget {
   const TemporaryBusChangePage({super.key});
@@ -46,7 +47,7 @@ class _TemporaryBusChangePageState
   Future<void> _loadBusInfo() async {
     final prefs = await SharedPreferences.getInstance();
 
-    String savedBus = prefs.getString("busNumber") ?? "-";
+    String savedBus = prefs.getString("busId") ?? "-";
     String savedRoute = prefs.getString("routeName") ?? "";
 
     if (!routes.contains(savedRoute)) {
@@ -60,7 +61,7 @@ class _TemporaryBusChangePageState
       currentBus = savedBus;
       currentRoute = savedRoute;
       selectedRoute = savedRoute;
-      selectedBus = savedBus == currentBus ? "" : savedBus;
+      selectedBus = "";
     });
 
     if (!prefs.containsKey("originalBusNumber")) {
@@ -144,7 +145,7 @@ class _TemporaryBusChangePageState
       });
 
     } catch (e) {
-      print("Temporary Bus Error: $e");
+      appLog("Temporary Bus Error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Something went wrong")),
       );
@@ -210,7 +211,7 @@ class _TemporaryBusChangePageState
         if (mounted) Navigator.pop(context, true);
       });
     } catch (e) {
-      print("Clear Temp Error: $e");
+      appLog("Clear Temp Error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Something went wrong")),
       );

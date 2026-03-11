@@ -44,8 +44,8 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
   }
 
   // ================= LOGOUT =================
-
   Future<void> _logout() async {
+
     final prefs = await SharedPreferences.getInstance();
     final bool isTracking = prefs.getBool("trackingActive") ?? false;
 
@@ -59,6 +59,37 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
       return;
     }
 
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Logout"),
+          content: const Text("Are you sure you want to logout?"),
+          actions: [
+
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context, false);
+              },
+              child: const Text("Cancel"),
+            ),
+
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+              ),
+              onPressed: () {
+                Navigator.pop(context, true);
+              },
+              child: const Text("Logout"),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm != true) return;
+
     await prefs.clear();
 
     if (!mounted) return;
@@ -69,7 +100,6 @@ class _DriverSettingsPageState extends State<DriverSettingsPage> {
           (route) => false,
     );
   }
-
   // ================= UI =================
 
   @override

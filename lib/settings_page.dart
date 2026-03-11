@@ -4,7 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'main.dart';
 import 'help_page.dart';
-import 'student_home_page.dart' hide HelpPage;
+import 'about_page.dart';
 import 'package:geolocator/geolocator.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -16,9 +16,10 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   bool notificationOn = true;
-
+  bool notificationUpdating = false;
   static const Color primaryColor = Color(0xFF00BFA6);
   static const Color greyIcon = Colors.black54;
+
   @override
   void initState() {
     super.initState();
@@ -78,12 +79,30 @@ class _SettingsPageState extends State<SettingsPage> {
                 borderRadius: BorderRadius.circular(14)),
             child: SwitchListTile(
               value: notificationOn,
-              onChanged: (val) async {
-                final prefs = await SharedPreferences.getInstance();
+              onChanged: notificationUpdating ? null : (val) async {
+                setState(() {
+                  notificationUpdating = true;
+                  notificationOn = val;
+                });
 
-                setState(() => notificationOn = val);
+                final prefs = await SharedPreferences.getInstance();
+                final busId = prefs.getString("busId");
 
                 await prefs.setBool("notificationsOn", val);
+
+                if (busId != null && busId.isNotEmpty) {
+                  if (val) {
+                    await FirebaseMessaging.instance
+                        .subscribeToTopic(busId.toLowerCase());
+                  } else {
+                    await FirebaseMessaging.instance
+                        .unsubscribeFromTopic(busId.toLowerCase());
+                  }
+                }
+
+                setState(() {
+                  notificationUpdating = false;
+                });
               },
               activeColor: primaryColor,
               title: const Text("Notifications"),
@@ -150,6 +169,17 @@ class _SettingsPageState extends State<SettingsPage> {
             iconColor: Colors.red,
             textColor: Colors.red,
           ),
+          const SizedBox(height: 30),
+
+          const Center(
+            child: Text(
+              "BusTrackPro v1.0.0",
+              style: TextStyle(
+                color: Colors.black45,
+                fontSize: 12,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -166,8 +196,7 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _tile(
-      IconData icon,
+  Widget _tile(IconData icon,
       String title,
       String subtitle,
       VoidCallback onTap, {
@@ -192,50 +221,71 @@ class _SettingsPageState extends State<SettingsPage> {
   void _showLogoutDialog() {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Logout"),
-        content:
-        const Text("Are you sure you want to logout?"),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Logout"),
+          content: const Text(
+            "Are you sure you want to logout?",
           ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(context);
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          actions: [
 
-              final prefs = await SharedPreferences.getInstance();
-
-              final oldBusId = prefs.getString("busId");
-
-              // 🔥 UNSUBSCRIBE FROM FCM TOPIC
-              if (oldBusId != null && oldBusId.isNotEmpty) {
-                await FirebaseMessaging.instance
-                    .unsubscribeFromTopic(oldBusId.toLowerCase());
-              }
-
-              // 🔥 CLEAR ALL SAVED SESSION DATA
-              await prefs.clear();
-
-              // 🔥 SIGN OUT FROM FIREBASE
-              await FirebaseAuth.instance.signOut();
-
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const WelcomePage(),
-                ),
-                    (route) => false,
-              );
-            },
-            child: const Text(
-              "Logout",
-              style: TextStyle(color: Colors.red),
+            /// Cancel Button
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+              },
+              child: const Text("Cancel"),
             ),
-          ),
-        ],
-      ),
+
+            /// Logout Button
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+              ),
+              onPressed: () async {
+                Navigator.pop(context);
+
+                final prefs = await SharedPreferences.getInstance();
+
+                final oldBusId = prefs.getString("busId");
+
+                /// Unsubscribe from FCM topic
+                if (oldBusId != null && oldBusId.isNotEmpty) {
+                  await FirebaseMessaging.instance
+                      .unsubscribeFromTopic(oldBusId.toLowerCase());
+                }
+
+                /// Clear local session
+                await prefs.clear();
+
+                /// Firebase sign out
+                await FirebaseAuth.instance.signOut();
+
+                if (!mounted) return;
+
+                /// Navigate to welcome page
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const WelcomePage(),
+                  ),
+                      (route) => false,
+                );
+              },
+              child: const Text(
+                "Logout",
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -299,7 +349,7 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
           ),
           Text(
-            value ?? "-",
+            (value == null || value!.isEmpty) ? "-" : value,
             style: const TextStyle(
               fontWeight: FontWeight.bold,
             ),
@@ -324,7 +374,7 @@ class _ProfilePageState extends State<ProfilePage> {
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
+        child: ListView(
           children: [
 
             const CircleAvatar(
@@ -332,6 +382,16 @@ class _ProfilePageState extends State<ProfilePage> {
               backgroundColor: Color(0xFF00BFA6),
               child: Icon(Icons.person,
                   size: 50, color: Colors.white),
+            ),
+
+            const SizedBox(height: 12),
+
+            Text(
+              (name == null || name!.isEmpty) ? "-" : name!,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
             ),
 
             const SizedBox(height: 24),

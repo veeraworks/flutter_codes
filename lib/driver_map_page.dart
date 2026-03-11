@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'dart:math';
+import 'utils/app_logger.dart';
 
 class KalmanLatLng {
   double q = 0.00001;
@@ -86,6 +87,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
   Timer? _etaTimer;
   Timer? _publishTimer;
+  Timer? _betterRouteTimer;
   BitmapDescriptor? _busIcon;
   Set<Marker> _stopMarkers = {};
   Marker? _busMarker;
@@ -114,7 +116,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
     await _loadPrefs();
 
     if (busId == null) {
-      print("❌ busId not found");
+      appLog("❌ busId not found");
       return;
     }
 
@@ -125,7 +127,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
     await _fetchRouteStops();
     await _startDriverGPS();
 
-    Timer.periodic(
+    _betterRouteTimer = Timer.periodic(
       const Duration(minutes: 2),
           (_) => _checkBetterRoute(),
     );
@@ -224,7 +226,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      print("GPS disabled");
+      appLog("GPS disabled");
       return;
     }
 
@@ -236,7 +238,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
-      print("Location permission denied");
+      appLog("Location permission denied");
       return;
     }
 
@@ -269,12 +271,23 @@ class _DriverMapPageState extends State<DriverMapPage> {
           }
 
           // 🔥 USE REAL LOCATION (NO ROUTE SNAPPING)
-          LatLng displayPoint = _gpsKalman.process(rawPoint);
+          _gpsKalman.process(rawPoint);
 
           // FIRST GPS FIX
           if (_driverLocation == null) {
 
-            _driverLocation = displayPoint;
+            _driverLocation = rawPoint;
+
+            if (_mapController != null) {
+              _mapController!.animateCamera(
+                CameraUpdate.newCameraPosition(
+                  CameraPosition(
+                    target: _driverLocation!,
+                    zoom: 17,
+                  ),
+                ),
+              );
+            }
 
             if (mounted) {
               setState(() {
@@ -282,9 +295,8 @@ class _DriverMapPageState extends State<DriverMapPage> {
               });
             }
 
-            print("✅ Driver location initialized: $_driverLocation");
+            appLog("✅ Driver location initialized: $_driverLocation");
 
-            // START ETA TIMER
             if (!_firstLocationFix) {
 
               _firstLocationFix = true;
@@ -296,12 +308,12 @@ class _DriverMapPageState extends State<DriverMapPage> {
                     (_) => _fetchDriverETA(),
               );
 
-              print("🚀 ETA timer started");
+              appLog("🚀 ETA timer started");
             }
           }
 
           // 🔥 BUS MOVES EXACTLY WITH DRIVER
-          await _animateBus(displayPoint);
+          await _animateBus(rawPoint);
 
           _checkStopArrival();
           _updateStepDistance();
@@ -320,14 +332,17 @@ class _DriverMapPageState extends State<DriverMapPage> {
           if (_currentSpeed < 0.3) {
             _currentSpeed = 0;
           }
+          setState(() {
+            _updateDriverMarker();
+          });
 
         } catch (e) {
-          print("GPS processing error: $e");
+          appLog("GPS processing error: $e");
         }
 
       },
       onError: (error) {
-        print("GPS stream error: $error");
+        appLog("GPS stream error: $error");
       },
     );
   }
@@ -377,15 +392,31 @@ class _DriverMapPageState extends State<DriverMapPage> {
     final prefs = await SharedPreferences.getInstance();
     busId = prefs.getString("busId")?.toUpperCase();
 
-    print("BUS ID = $busId");
+    appLog("BUS ID = $busId");
   }
 
   Future<void> _loadBusIcon() async {
-    _busIcon = await BitmapDescriptor.fromAssetImage(
-      const ImageConfiguration(size: Size(100, 100)),
-      "assets/images/bus_icon_map.png",
-    );
+    try {
+      final icon = await BitmapDescriptor.fromAssetImage(
+        const ImageConfiguration(size: Size(72, 72)),
+        "assets/images/bus_icon_map.png",
+      );
+
+      _busIcon = icon;
+
+      // 🔥 Force marker refresh
+      if (_driverLocation != null) {
+        setState(() {
+          _updateDriverMarker();
+        });
+      }
+
+      appLog("✅ Bus icon loaded");
+    } catch (e) {
+      appLog("❌ Bus icon load failed: $e");
+    }
   }
+
   void _startNavigationCamera(LatLng busPos) {
     if (!_followBus || _mapController == null) return;
 
@@ -465,28 +496,28 @@ class _DriverMapPageState extends State<DriverMapPage> {
   }
 // ================= DRIVER ETA =================
   Future<void> _fetchDriverETA() async {
-    print("==== DRIVER ETA START ====");
-    print("busId = $busId");
-    print("driverLocation = $_driverLocation");
-    print("routeStops length = ${_routeStops.length}");
+    appLog("==== DRIVER ETA START ====");
+    appLog("busId = $busId");
+    appLog("driverLocation = $_driverLocation");
+    appLog("routeStops length = ${_routeStops.length}");
 
     if (busId == null) return;
 
     // ✅ prevent crash if location not ready
     if (_driverLocation == null) {
-      print("❌ ETA skipped — driverLocation is null");
+      appLog("❌ ETA skipped — driverLocation is null");
       return;
     }
 
     // ✅ prevent invalid GPS
     if (_driverLocation!.latitude == 0 ||
         _driverLocation!.longitude == 0) {
-      print("❌ ETA skipped — invalid GPS (0,0)");
+      appLog("❌ ETA skipped — invalid GPS (0,0)");
       return;
     }
 
     if (_routeStops.isEmpty) {
-      print("❌ ETA skipped — routeStops empty");
+      appLog("❌ ETA skipped — routeStops empty");
       return;
     }
 
@@ -496,8 +527,8 @@ class _DriverMapPageState extends State<DriverMapPage> {
     final destLng = lastStop["lng"];
 
     if (destLat == null || destLng == null) {
-      print("❌ ETA skipped — invalid stop coordinates");
-      print("LastStop = $lastStop");
+      appLog("❌ ETA skipped — invalid stop coordinates");
+      appLog("LastStop = $lastStop");
       return;
     }
 
@@ -515,7 +546,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
     _lastEtaLocation = _driverLocation;
 
     try {
-      print("📡 Calling ETA API safely...");
+      appLog("📡 Calling ETA API safely...");
 
       final data = await ApiService.getDriverEta(
         busId: busId!,
@@ -527,11 +558,11 @@ class _DriverMapPageState extends State<DriverMapPage> {
       );
 
       if (data == null) {
-        print("❌ ETA API returned null");
+        appLog("❌ ETA API returned null");
         return;
       }
 
-      print("✅ ETA Response received");
+      appLog("✅ ETA Response received");
 
       // ================= TURN BY TURN =================
       _navSteps = data["steps"] ?? [];
@@ -564,7 +595,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
       await _fetchRouteStops(); // 🔥 refresh stop markers
 
     } catch (e) {
-      print("❌ Driver ETA error: $e");
+      appLog("❌ Driver ETA error: $e");
     }
   }
 // ================= DISTANCE HELPER =================
@@ -697,7 +728,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
     if (distance < 25) {
       _arrivalTriggered = true;
 
-      print("✅ Arrived at $_nextStopName");
+      appLog("✅ Arrived at $_nextStopName");
 
       await _notifyBackendArrival();
     }
@@ -732,14 +763,14 @@ class _DriverMapPageState extends State<DriverMapPage> {
         },
       );
 
-      print("📡 Backend notified: arrived at $_nextStopName");
+      appLog("📡 Backend notified: arrived at $_nextStopName");
 
       // allow next detection after cooldown
       Future.delayed(const Duration(seconds: 20), () {
         _arrivalTriggered = false;
       });
     } catch (e) {
-      print("Arrival notify error: $e");
+      appLog("Arrival notify error: $e");
     }
   }
 
@@ -815,15 +846,15 @@ class _DriverMapPageState extends State<DriverMapPage> {
         );
       }
 
-      print("Stops API raw response: ${response.body}");
-      print("Stops status code: ${response.statusCode}");
+      appLog("Stops API raw response: ${response.body}");
+      appLog("Stops status code: ${response.statusCode}");
 
       setState(() {
         _stopMarkers = stopMarkers;   // ✅ ONLY STOP MARKERS
       });
 
     } catch (e) {
-      print("Route fetch error: $e");
+      appLog("Route fetch error: $e");
     }
   }
 
@@ -840,7 +871,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
       final data = event.snapshot.value;
 
-      print("Polyline snapshot = $data");
+      appLog("Polyline snapshot = $data");
 
       if (data == null) return;
 
@@ -853,7 +884,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
       List<PointLatLng> decoded =
       polylinePoints.decodePolyline(encodedPolyline);
 
-      print("Decoded polyline points = ${decoded.length}");
+      appLog("Decoded polyline points = ${decoded.length}");
 
       List<LatLng> points =
       decoded.map((p) => LatLng(p.latitude, p.longitude)).toList();
@@ -866,8 +897,8 @@ class _DriverMapPageState extends State<DriverMapPage> {
         _fitRouteToScreen(points);
       }
 
-      print("Polyline loaded");
-      print("Decoded count = ${decoded.length}");
+      appLog("Polyline loaded");
+      appLog("Decoded count = ${decoded.length}");
     });
   }
 
@@ -891,7 +922,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
       final routes = List.from(data);
       _alternativeRoutes = routes;
 
-      print("🚍 Alternative routes loaded: ${routes.length}");
+      appLog("🚍 Alternative routes loaded: ${routes.length}");
     });
   }
 
@@ -940,7 +971,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
     });
 
-    print("🚦 Switched to better route");
+    appLog("🚦 Switched to better route");
   }
 // ================= FIT ROUTE =================
 
@@ -978,13 +1009,6 @@ class _DriverMapPageState extends State<DriverMapPage> {
     return delay.clamp(25, 120);
   }
 
-  LatLng _interpolate(LatLng a, LatLng b, double t) {
-    return LatLng(
-      a.latitude + (b.latitude - a.latitude) * t,
-      a.longitude + (b.longitude - a.longitude) * t,
-    );
-  }
-
 // ================= DISPOSE =================
 
   @override
@@ -993,6 +1017,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
     _polylineListener?.cancel();
     _altRoutesListener?.cancel();
     _etaTimer?.cancel();
+    _betterRouteTimer?.cancel();
     _cameraTimer?.cancel();
     _publishTimer?.cancel();
     _mapController?.dispose();
@@ -1173,3 +1198,4 @@ class _DriverMapPageState extends State<DriverMapPage> {
     );
   }
 }
+

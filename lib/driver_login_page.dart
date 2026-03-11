@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'service/api_service.dart';
 import 'driver_otp_page.dart';
+import 'utils/app_logger.dart';
 
 class DriverLoginPage extends StatefulWidget {
   const DriverLoginPage({super.key});
@@ -76,7 +77,7 @@ class _DriverLoginPageState extends State<DriverLoginPage>
       try {
         data = jsonDecode(response.body);
       } catch (e) {
-        print("JSON parse error: $e");
+        appLog("JSON parse error: $e");
       }
       if (response.statusCode == 200 && data["driver"] != null) {
 
@@ -85,16 +86,22 @@ class _DriverLoginPageState extends State<DriverLoginPage>
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString("busId", driver["busId"] ?? "");
         await prefs.setString("permBusId", driver["busId"] ?? "");
-        await prefs.setString("busNumber", driver["busNumber"] ?? "");
-        await prefs.setString("routeName", driver["busName"] ?? "");
+        await prefs.setString(
+          "busNumber",
+          driver["busNumber"] ?? driver["busId"] ?? "",
+        );
+        await prefs.setString(
+          "routeName",
+          driver["busName"] ?? driver["routeName"] ?? driver["route"] ?? "",
+        );
         await prefs.setString("shift", driver["shift"] ?? "");
 
         await prefs.setString("driverName", driver["name"] ?? "");
         await prefs.setString("licenseNo", driver["licenseNo"] ?? "");
         await prefs.setString("phone", phone);
 
-        await prefs.setBool("isLoggedIn", true);
-        await prefs.setString("role", "driver");
+        // Keep pre-OTP state separate; mark full session only after OTP success.
+        await prefs.setString("pendingDriverPhone", phone);
         await prefs.setBool("isTempBusActive", false);
 
 
