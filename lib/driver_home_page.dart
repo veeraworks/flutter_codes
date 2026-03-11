@@ -33,6 +33,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   String routeName = "-";
   String shift = "-";
   bool isTempBusActive = false;
+  String driverName = "Driver";
 
   // NEW: keep permanent and temporary values separate
   String permBusNumber = "-";
@@ -40,7 +41,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   String? tempBusNumber;
   String? tempRouteName;
   double _lastSpeed = 0;
-
+  DateTime? tripStartTime;
   Timer? _gpsCheckTimer;
   bool gpsOn = false;
   bool internetOn = false;
@@ -225,6 +226,7 @@ class _DriverHomePageState extends State<DriverHomePage>
     final prefs = await SharedPreferences.getInstance();
 
     setState(() {
+      driverName = prefs.getString("driverName") ?? "Driver";
       permBusNumber = prefs.getString("busNumber") ?? "-";
       permRouteName =
       ((prefs.getString("routeName")?.isNotEmpty ?? false) &&
@@ -437,18 +439,33 @@ class _DriverHomePageState extends State<DriverHomePage>
   }
   //==================== START TRIP WITH MODE (NEW) =================
   Future<void> _startTripWithMode(String mode) async {
-    if (busId == null) {
+
+    // Prevent double start
+    if (tripStarted) {
       if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Trip already running")),
+      );
+      return;
+    }
+
+    // Validate bus ID
+    if (busId == null || busId!.isEmpty) {
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Bus ID not found")),
       );
       return;
     }
 
+    // Check GPS + Internet
     await _checkStatuses();
 
     if (!gpsOn || !internetOn) {
       if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Enable GPS & Internet first")),
       );
@@ -456,6 +473,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     try {
+
+      appLog("🚍 Starting trip for bus → $busId");
+
       final response = await ApiService.post(
         "/drivers/start-trip",
         {
@@ -467,33 +487,34 @@ class _DriverHomePageState extends State<DriverHomePage>
       appLog("START TRIP RESPONSE → ${response.body}");
 
       if (response.statusCode != 200) {
+
         if (!mounted) return;
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Failed to start trip")),
         );
+
         return;
       }
 
-      if (response.body.isEmpty) {
-        appLog("Start trip API returned empty response");
-        return;
-      }
+      // ---------------- PARSE RESPONSE ----------------
 
       Map<String, dynamic> data = {};
 
-      try {
-        data = jsonDecode(response.body);
-      } catch (e) {
-        appLog("JSON decode failed");
+      if (response.body.isNotEmpty) {
+        try {
+          data = jsonDecode(response.body);
+        } catch (e) {
+          appLog("JSON decode failed → $e");
+        }
       }
-      appLog("TripId received → ${data["tripId"]}");
 
-// If backend returned tripId
+      // ---------------- GET TRIP ID ----------------
+
       if (data["tripId"] != null) {
         currentTripId = data["tripId"].toString();
       }
 
-// If backend did not return tripId (trip already active)
       if (currentTripId == null) {
         final prefs = await SharedPreferences.getInstance();
         currentTripId = prefs.getString("activeTripId");
@@ -501,18 +522,22 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       appLog("Current TripId → $currentTripId");
 
-// Update UI
+      // ---------------- UPDATE UI ----------------
+
       if (mounted) {
         setState(() {
           tripStarted = true;
           tripMode = mode;
+          tripStartTime = DateTime.now(); // start timer
         });
       }
 
-      // Start background service
+      // ---------------- START BACKGROUND SERVICE ----------------
+
       final service = FlutterBackgroundService();
 
       bool running = await service.isRunning();
+
       if (!running) {
         await service.startService();
       }
@@ -521,7 +546,8 @@ class _DriverHomePageState extends State<DriverHomePage>
         "busId": busId,
       });
 
-      // Save trip state locally
+      // ---------------- SAVE LOCAL STATE ----------------
+
       final prefs = await SharedPreferences.getInstance();
 
       await prefs.setBool("trackingActive", true);
@@ -532,19 +558,23 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       await prefs.setString("tripMode", mode);
 
-      await _checkStatuses();
+      // ---------------- START GPS TRACKING ----------------
 
-      // Start GPS tracking
       await _startLocationUpdates();
+
+      // ---------------- FINAL CHECK ----------------
+
+      await _checkStatuses();
 
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("$mode trip started")),
+        SnackBar(content: Text("$mode trip started successfully")),
       );
 
     } catch (e) {
-      appLog("START TRIP ERROR → $e");
+
+      appLog("❌ START TRIP ERROR → $e");
 
       if (!mounted) return;
 
@@ -553,24 +583,28 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
     }
   }
-
   //==================== END TRIP WITH MODE (NEW) =================
   Future<void> _endTripFromBackend() async {
+
+    if (tripEnding) return;
+
+    tripEnding = true;
+
     final prefs = await SharedPreferences.getInstance();
 
     String? tripId = currentTripId ?? prefs.getString("activeTripId");
 
-    appLog("END TRIP busId = $busId");
-    appLog("END TRIP tripId = $tripId");
+    appLog("🚏 END TRIP busId = $busId");
+    appLog("🚏 END TRIP tripId = $tripId");
 
     if (busId == null || tripId == null) {
       appLog("❌ End trip failed. Missing trip data.");
+      tripEnding = false;
       return;
     }
 
-    tripEnding = true;
-
     try {
+
       final response = await ApiService.post(
         "/drivers/end-trip",
         {
@@ -581,31 +615,50 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       appLog("END TRIP RESPONSE → ${response.body}");
 
-      // 🔥 CLEAR LOCAL DATA
+      // ---------------- STOP GPS ----------------
+
+      await positionStream?.cancel();
+
+      // ---------------- STOP BACKGROUND SERVICE ----------------
+
+      FlutterBackgroundService().invoke("stopService");
+
+      // ---------------- CLEAR LOCAL STORAGE ----------------
+
       await prefs.setBool("trackingActive", false);
       await prefs.remove("activeTripId");
       await prefs.remove("tripMode");
 
-      await positionStream?.cancel();
-
-      FlutterBackgroundService().invoke("stopService");
+      // ---------------- UPDATE UI ----------------
 
       if (!mounted) return;
+
       setState(() {
         tripStarted = false;
-        currentTripId = null;
         tripEnding = false;
+        currentTripId = null;
+        tripStartTime = null;
         _routePoints.clear();
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Trip Ended")),
+        const SnackBar(content: Text("Trip Ended Successfully")),
       );
 
     } catch (e) {
+
       appLog("❌ End Trip Error → $e");
+
+      tripEnding = false;
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Failed to end trip")),
+      );
     }
   }
+
   Future<void> _refreshDriverProfile() async {
     final prefs = await SharedPreferences.getInstance();
     final phone = prefs.getString("phone");
@@ -763,8 +816,14 @@ class _DriverHomePageState extends State<DriverHomePage>
           ),
         ),
 
-        body: SingleChildScrollView(
-          child: Column(
+        body: RefreshIndicator(
+            onRefresh: () async {
+              await _refreshDriverProfile();
+              await _loadBusInfo();
+              await _checkStatuses();
+            },
+            child: SingleChildScrollView(
+              child: Column(
             children: [
               // HEADER
               SlideTransition(
@@ -801,9 +860,13 @@ class _DriverHomePageState extends State<DriverHomePage>
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'Driver Dashboard',
-                              style: TextStyle(color: Colors.white, fontSize: 22),
+                            Text(
+                              'Hi, $driverName',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 17,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                             Text(
                               tripStarted
@@ -838,7 +901,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
               if (isTempBusActive)
                 _infoCard(
-                  title: "Temporary Bus Active",
+                  title: "⚠ Temporary Bus Active",
                   titleColor: Colors.orange,
                   children: [
                     _infoRow("Temporary Bus", tempBusNumber ?? "-"),
@@ -888,6 +951,7 @@ class _DriverHomePageState extends State<DriverHomePage>
               ),
             ],
           ),
+         )
         )
     );
   }
@@ -951,6 +1015,13 @@ class _DriverHomePageState extends State<DriverHomePage>
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -982,10 +1053,14 @@ class _infoRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: const TextStyle(color: Colors.black54)),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
+
+        Icon(Icons.circle, size: 8, color: Colors.grey),
+        SizedBox(width: 10),
+
+        Expanded(child: Text(label)),
+
+        Text(value),
       ],
     );
   }

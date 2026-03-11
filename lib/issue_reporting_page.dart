@@ -15,6 +15,7 @@ class IssueReportingPage extends StatefulWidget {
 class _IssueReportingPageState extends State<IssueReportingPage> {
   String? activeIssue;
   StreamSubscription<DatabaseEvent>? _issueListener;
+  bool reportingIssue = false;
 
   final List<Map<String, dynamic>> issues = [
     {"title": "Bus Breakdown", "icon": Icons.build, "color": Colors.red},
@@ -72,6 +73,13 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
 
   // ================= REPORT ISSUE =================
   Future<void> reportIssue(String issue) async {
+
+    if (reportingIssue) return;
+
+    setState(() {
+      reportingIssue = true;
+    });
+
     final prefs = await SharedPreferences.getInstance();
     final busId = prefs.getString("busId");
     final routeName = prefs.getString("routeName");
@@ -106,6 +114,10 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
         backgroundColor: Colors.red,
       ),
     );
+
+    setState(() {
+      reportingIssue = false;
+    });
   }
 
   // ================= CLEAR ISSUE =================

@@ -14,7 +14,6 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
   String driverName = "-";
   String busId = "-";
   String routeName = "-";
-  String busNumber = "-";
   String phoneNumber = "-";
   String licenseNo = "-";
 
@@ -30,9 +29,10 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
     final prefs = await SharedPreferences.getInstance();
 
     String? savedRoute = prefs.getString("routeName");
+
     final normalizedRoute = (savedRoute != null &&
-            savedRoute.trim().isNotEmpty &&
-            savedRoute.trim() != "-")
+        savedRoute.trim().isNotEmpty &&
+        savedRoute.trim() != "-")
         ? savedRoute.trim()
         : null;
 
@@ -46,15 +46,11 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
 
       busId = prefs.getString("busId") ?? "-";
 
-      busNumber = prefs.getString("busNumber") ?? busId;
-
       phoneNumber = prefs.getString("phone") ?? "-";
 
       licenseNo = prefs.getString("licenseNo") ?? "-";
 
-      routeName = (normalizedRoute != null)
-          ? normalizedRoute
-          : "Not Assigned";
+      routeName = normalizedRoute ?? "Not Assigned";
 
     });
   }
@@ -110,20 +106,29 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                     ),
                   ),
 
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 14),
+
+                  Text(
+                    driverName,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+
+                  const SizedBox(height: 4),
 
                   const Text(
-                    "Driver Details",
+                    "Driver Profile",
                     style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                      color: Colors.black54,
+                      fontSize: 14,
                     ),
                   ),
 
                   const SizedBox(height: 20),
 
-                  ProfileRow("Name", driverName),
-                  ProfileRow("Bus Number", busNumber),
+                  ProfileRow("Assigned Bus", busId),
                   ProfileRow("Route", routeName),
                   ProfileRow("License", licenseNo),
                   ProfileRow("Phone", phoneNumber),

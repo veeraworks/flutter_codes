@@ -149,7 +149,12 @@ class _StudentHomePageState extends State<StudentHomePage>
     _listenToBusIssues();
     _listenToBus();
     _listenToTemporaryBus();
+    _fetchEta();
 
+    _etaTimer = Timer.periodic(
+      const Duration(seconds: 10),
+          (_) => _fetchEta(),
+    );
     // Start GPS tracking
   }
   Future<void> _initLocationPermission() async {
@@ -669,7 +674,50 @@ class _StudentHomePageState extends State<StudentHomePage>
       displayRoute = routeName;
     });
   }
+  Future<void> _fetchEta() async {
+    try {
 
+      // 🔴 Avoid API call if bus not active
+      if (busId == null || !_busActive) return;
+
+      final response = await ApiService.get("/eta/$busId");
+
+      if (response.statusCode != 200) return;
+
+      final data = jsonDecode(response.body);
+
+      // 📏 Extract distance
+      double distanceMeters = 0;
+
+      String distanceText = data["distanceText"] ?? "";
+
+      if (distanceText.contains("km")) {
+        double km = double.tryParse(distanceText.replaceAll(RegExp('[^0-9.]'), '')) ?? 0;
+        distanceMeters = km * 1000;
+      } else {
+        distanceMeters = double.tryParse(distanceText.replaceAll(RegExp('[^0-9.]'), '')) ?? 0;
+      }
+
+      // ⏱ Convert seconds → minutes
+      double minutes = ((data["durationValue"] ?? 0) / 60).ceilToDouble();
+
+      // 🚍 Smart status logic
+      if (distanceMeters < 100) {
+        minutes = 0; // Bus arrived
+      } else if (distanceMeters < 500) {
+        minutes = -1; // Bus nearby
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _etaMinutes = minutes;
+      });
+
+    } catch (e) {
+      appLog("ETA error: $e");
+    }
+  }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
