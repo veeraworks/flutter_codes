@@ -276,6 +276,17 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
             _driverLocation = displayPoint;
 
+            if (_mapController != null) {
+              _mapController!.animateCamera(
+                CameraUpdate.newCameraPosition(
+                  CameraPosition(
+                    target: _driverLocation!,
+                    zoom: 17,
+                  ),
+                ),
+              );
+            }
+
             if (mounted) {
               setState(() {
                 _updateDriverMarker();
@@ -284,7 +295,6 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
             print("✅ Driver location initialized: $_driverLocation");
 
-            // START ETA TIMER
             if (!_firstLocationFix) {
 
               _firstLocationFix = true;
@@ -320,6 +330,9 @@ class _DriverMapPageState extends State<DriverMapPage> {
           if (_currentSpeed < 0.3) {
             _currentSpeed = 0;
           }
+          setState(() {
+            _updateDriverMarker();
+          });
 
         } catch (e) {
           print("GPS processing error: $e");
@@ -382,7 +395,7 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
   Future<void> _loadBusIcon() async {
     _busIcon = await BitmapDescriptor.fromAssetImage(
-      const ImageConfiguration(size: Size(100, 100)),
+      const ImageConfiguration(size: Size(48, 48)),
       "assets/images/bus_icon_map.png",
     );
   }
@@ -976,13 +989,6 @@ class _DriverMapPageState extends State<DriverMapPage> {
     int delay = (80 - (speed * 3)).toInt();
 
     return delay.clamp(25, 120);
-  }
-
-  LatLng _interpolate(LatLng a, LatLng b, double t) {
-    return LatLng(
-      a.latitude + (b.latitude - a.latitude) * t,
-      a.longitude + (b.longitude - a.longitude) * t,
-    );
   }
 
 // ================= DISPOSE =================

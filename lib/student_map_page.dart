@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:firebase_database/firebase_database.dart';
@@ -100,7 +99,6 @@ class _MapPageState extends State<MapPage> {
 
   String? busId;
   String? stopName;
-  String? _mapStyle;
   String? _busStatus;
 
   Timer? _predictiveTimer;
@@ -114,7 +112,6 @@ class _MapPageState extends State<MapPage> {
   void initState() {
     super.initState();
     _initAll();
-    _loadMapStyle();
   }
 
   Future<void> _initAll() async {
@@ -167,10 +164,6 @@ class _MapPageState extends State<MapPage> {
       _busMarker = marker;
     });
   }
-  Future<void> _loadMapStyle() async {
-    _mapStyle = await rootBundle.loadString("assets/map_style.json");
-  }
-
   void _startCountdown(int seconds) {
     _countdownTimer?.cancel();
 
@@ -220,7 +213,7 @@ class _MapPageState extends State<MapPage> {
 
   Future<void> _loadBusIcon() async {
     _busIcon = await BitmapDescriptor.asset(
-      ImageConfiguration(size: Size(40, 40)),
+      ImageConfiguration(size: Size(48, 48)),
       "assets/images/bus_icon_map.png",
     );
   }
@@ -676,7 +669,7 @@ class _MapPageState extends State<MapPage> {
     _polylineListener?.cancel();
 
     _polylineListener = FirebaseDatabase.instance
-        .ref("busRoutes/$busId/fullRoadPolyline")
+        .ref("busRoutes/$busId/navigationPolyline")
         .onValue
         .listen((event) {
 
@@ -708,6 +701,10 @@ class _MapPageState extends State<MapPage> {
       if (points.isEmpty) {
         print("Decoded polyline empty");
         return;
+      }
+
+      if (_mapController != null) {
+        _fitRouteToScreen(points);
       }
 
       setState(() {
@@ -1006,12 +1003,10 @@ class _MapPageState extends State<MapPage> {
           GoogleMap(
             initialCameraPosition: CameraPosition(
               target: _studentLocation,
-              zoom: 14,
+              zoom: 16.5,
             ),
             onMapCreated: (controller) {
               _mapController = controller;
-
-                _mapController!.setMapStyle(_mapStyle);
             },
             myLocationEnabled: true,
             markers: {
