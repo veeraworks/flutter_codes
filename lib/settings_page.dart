@@ -4,7 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'main.dart';
 import 'help_page.dart';
-import 'student_home_page.dart' hide HelpPage;
+import 'about_page.dart';
 import 'package:geolocator/geolocator.dart';
 
 class SettingsPage extends StatefulWidget {

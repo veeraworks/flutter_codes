@@ -11,7 +11,10 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'service/api_service.dart';
+import 'help_page.dart';
+import 'about_page.dart';
 import 'package:geolocator/geolocator.dart';
+import 'utils/app_logger.dart';
 
 class StudentHomePage extends StatefulWidget {
   const StudentHomePage({super.key});
@@ -33,6 +36,8 @@ class _StudentHomePageState extends State<StudentHomePage>
   StreamSubscription<DatabaseEvent>? _busListener;
   Timer? _etaTimer;
   String lastUpdatedText = "Just now";
+  Set<Polyline> _polylines = {};
+  List<LatLng> polylinePoints = [];
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
@@ -82,6 +87,48 @@ class _StudentHomePageState extends State<StudentHomePage>
       _initializeStudent();
     });
   }
+  Future<void> fetchRemainingRoute() async {
+
+    if (busId == null) return;
+
+    final response = await ApiService.get(
+      "/routes/remaining/$busId",
+    );
+
+    if (response.statusCode == 200) {
+
+      final data = jsonDecode(response.body);
+
+      final busLocation = data["busLocation"];
+      final remainingStops = data["remainingStops"];
+
+      List<LatLng> points = [];
+
+      // start from bus
+      points.add(
+          LatLng(busLocation["lat"], busLocation["lng"])
+      );
+
+      for (var stop in remainingStops) {
+        points.add(
+            LatLng(stop["lat"], stop["lng"])
+        );
+      }
+
+      setState(() {
+
+        _miniPolylines = {
+          Polyline(
+            polylineId: const PolylineId("remainingRoute"),
+            color: Colors.blue,
+            width: 5,
+            points: points,
+          )
+        };
+
+      });
+    }
+  }
 
   Future<void> _initializeStudent() async {
 
@@ -94,6 +141,7 @@ class _StudentHomePageState extends State<StudentHomePage>
     await _requestPermission();
     if (busId != null) {
       await _loadRoutePolyline(busId!);
+      await fetchRemainingRoute();
     }
     // Attach listeners
     _listenForMessages();
@@ -115,7 +163,7 @@ class _StudentHomePageState extends State<StudentHomePage>
         });
       }
     } catch (e) {
-      print("Location permission error: $e");
+      appLog("Location permission error: $e");
     }
   }
   Future<void> _loadRoutePolyline(String busId) async {
@@ -155,7 +203,7 @@ class _StudentHomePageState extends State<StudentHomePage>
 
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        print("Location service disabled");
+        appLog("Location service disabled");
         return;
       }
 
@@ -167,7 +215,7 @@ class _StudentHomePageState extends State<StudentHomePage>
 
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
-        print("Location permission denied");
+        appLog("Location permission denied");
         return;
       }
 
@@ -184,10 +232,10 @@ class _StudentHomePageState extends State<StudentHomePage>
         );
       });
 
-      print("📍 Student location: $_studentLocation");
+      appLog("📍 Student location: $_studentLocation");
 
     } catch (e) {
-      print("Student location error: $e");
+      appLog("Student location error: $e");
     }
   }
 
@@ -219,6 +267,7 @@ class _StudentHomePageState extends State<StudentHomePage>
     _tempBusListener?.cancel();
     _etaTimer?.cancel();
     _notificationListener?.cancel();
+    _miniMapController?.dispose();
     _animController.dispose();
     super.dispose();
   }
@@ -226,10 +275,10 @@ class _StudentHomePageState extends State<StudentHomePage>
     final prefs = await SharedPreferences.getInstance();
     final regNo = prefs.getString("regNo");
 
-    print("🔥 REGNO BEFORE API CALL = $regNo");
+    appLog("🔥 REGNO BEFORE API CALL = $regNo");
 
     if (regNo == null || regNo.isEmpty) {
-      print("❌ REGNO IS NULL OR EMPTY");
+      appLog("❌ REGNO IS NULL OR EMPTY");
       return;
     }
 
@@ -241,7 +290,7 @@ class _StudentHomePageState extends State<StudentHomePage>
     );
 
     if (response.statusCode == 404) {
-      print("❌ Student not found in backend");
+      appLog("❌ Student not found in backend");
 
       if (!mounted) return;
 
@@ -255,7 +304,7 @@ class _StudentHomePageState extends State<StudentHomePage>
     }
 
     if (response.statusCode != 200) {
-      print("❌ API FAILED: ${response.statusCode}");
+      appLog("❌ API FAILED: ${response.statusCode}");
       return;
     }
 
@@ -283,7 +332,7 @@ class _StudentHomePageState extends State<StudentHomePage>
       displayRoute = data["busName"];
       busId = newBusId;
     });
-    print("🔥 FULL STUDENT PROFILE RESPONSE = $data");
+    appLog("🔥 FULL STUDENT PROFILE RESPONSE = $data");
   }
 
   Future<void> _requestPermission() async {
@@ -294,7 +343,7 @@ class _StudentHomePageState extends State<StudentHomePage>
       sound: true,
     );
 
-    print("Permission status: ${settings.authorizationStatus}");
+    appLog("Permission status: ${settings.authorizationStatus}");
   }
 
   void _listenForMessages() {
@@ -375,7 +424,7 @@ class _StudentHomePageState extends State<StudentHomePage>
               // 🔥 UNSUBSCRIBE FROM FCM TOPIC
               if (oldBusId != null && oldBusId.isNotEmpty) {
                 final topic = oldBusId.toLowerCase().trim();
-                print("Unsubscribing from topic: $topic");
+                appLog("Unsubscribing from topic: $topic");
 
                 await FirebaseMessaging.instance
                     .unsubscribeFromTopic(topic);
@@ -411,11 +460,11 @@ class _StudentHomePageState extends State<StudentHomePage>
     final String? originalBusId = prefs.getString("busId");
 
     if (originalBusId == null) {
-      print("❌ busId is NULL — cannot listen to temp bus");
+      appLog("❌ busId is NULL — cannot listen to temp bus");
       return;
     }
 
-    print("👂 Listening to temporaryBusChanges/${originalBusId.toUpperCase()}");
+    appLog("👂 Listening to temporaryBusChanges/${originalBusId.toUpperCase()}");
 
     _tempBusListener?.cancel();
 
@@ -432,18 +481,18 @@ class _StudentHomePageState extends State<StudentHomePage>
         final String? newBus = data["newBus"];
         final String? tempRoute = data["tempRoute"];
 
-        print("🚍 TEMP BUS ACTIVE");
+        appLog("🚍 TEMP BUS ACTIVE");
 
         // 🔥 1️⃣ Unsubscribe old temp topic (if switching)
         if (tempBus != null && tempBus != newBus) {
-          print("Unsubscribing old temp topic: ${tempBus!.toLowerCase()}");
+          appLog("Unsubscribing old temp topic: ${tempBus!.toLowerCase()}");
           await FirebaseMessaging.instance
               .unsubscribeFromTopic(tempBus!.toLowerCase());
         }
 
         // 🔥 2️⃣ Subscribe new temp topic
         if (newBus != null && tempBus != newBus) {
-          print("Subscribing to new temp topic: ${newBus.toLowerCase()}");
+          appLog("Subscribing to new temp topic: ${newBus.toLowerCase()}");
           await FirebaseMessaging.instance
               .subscribeToTopic(newBus.toLowerCase());
         }
@@ -463,11 +512,11 @@ class _StudentHomePageState extends State<StudentHomePage>
       // ================= TEMP CLEARED =================
       else {
 
-        print("🔄 TEMP BUS CLEARED");
+        appLog("🔄 TEMP BUS CLEARED");
 
         // 🔥 Unsubscribe from temp topic if exists
         if (tempBus != null) {
-          print("Unsubscribing temp topic: ${tempBus!.toLowerCase()}");
+          appLog("Unsubscribing temp topic: ${tempBus!.toLowerCase()}");
           await FirebaseMessaging.instance
               .unsubscribeFromTopic(tempBus!.toLowerCase());
         }
@@ -519,7 +568,7 @@ class _StudentHomePageState extends State<StudentHomePage>
           );
         });
 
-        print("🟡 Bus not started / trip ended");
+        appLog("🟡 Bus not started / trip ended");
 
         return;
       }
@@ -535,7 +584,7 @@ class _StudentHomePageState extends State<StudentHomePage>
 
       setState(() {
         _busLocation = busPos;
-        _busActive = true;   // ⭐ IMPORTANT
+        _busActive = true;
 
         _miniMarkers = {
           Marker(
@@ -553,7 +602,9 @@ class _StudentHomePageState extends State<StudentHomePage>
             ),
           ),
         };
-      });;
+      });
+
+      fetchRemainingRoute();
 
       // 🎥 Move camera to bus
       if (_miniMapController != null) {
@@ -1140,7 +1191,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     final prefs = await SharedPreferences.getInstance();
     final savedRegNo = prefs.getString("regNo");
 
-    print("REGNO FROM PREFS = $savedRegNo");
+    appLog("REGNO FROM PREFS = $savedRegNo");
 
     if (savedRegNo == null) {
       Future.delayed(Duration.zero, () {
@@ -1441,153 +1492,4 @@ class NotificationCard extends StatelessWidget {
   }
 }
 
-/* ================= ABOUT APP PAGE ================= */
 
-class AboutApp extends StatelessWidget {
-  const AboutApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF6F3F7),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF00BFA6),
-        title: const Text('About BusTrackPro',
-            style: TextStyle(color: Colors.white)),
-        iconTheme: const IconThemeData(color: Colors.white),
-        elevation: 0,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-
-            _infoCard(
-              title: 'BusTrackPro',
-              content: 'Smart College Bus Tracking System',
-              big: true,
-            ),
-
-            const SizedBox(height: 20),
-
-            _infoCard(
-              content:
-              'BusTrackPro is a smart and user-friendly college bus tracking application designed to help students track their buses in real time.\n\n'
-                  'The app reduces waiting time, improves safety, and provides live bus updates such as arrival time, delay status, and bus availability.\n\n'
-                  'BusTrackPro aims to create a reliable and stress-free daily travel experience for students and staff.',
-            ),
-
-            const SizedBox(height: 20),
-
-            _infoCard(
-              title: 'App Information',
-              content:
-              'Version: 1.0.0\nStatus: Active\nDeveloped by: Sairam Instituition\nPlatform: Android',
-              highlight: true,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-Widget _infoCard({
-  String? title,
-  required String content,
-  bool big = false,
-  bool highlight = false,
-}) {
-  return Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(18),
-    decoration: BoxDecoration(
-      color: highlight ? const Color(0xFFE0F7F3) : Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      boxShadow: highlight
-          ? null
-          : [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.05),
-          blurRadius: 10,
-        ),
-      ],
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (title != null)
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: big ? 26 : 17,
-              fontWeight: FontWeight.bold,
-              color: const Color(0xFF00BFA6),
-            ),
-          ),
-        if (title != null) const SizedBox(height: 8),
-        Text(content,
-            style: const TextStyle(fontSize: 15, height: 1.6)),
-      ],
-    ),
-  );
-}
-// ================= HELP & SUPPORT PAGE =================
-class HelpPage extends StatelessWidget {
-  const HelpPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF6F3F7),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF00BFA6),
-        elevation: 0,
-        title: const Text(
-          'Help & Support',
-          style: TextStyle(color: Colors.white),
-        ),
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-
-            // 🔷 HOW TO USE
-            _infoCard(
-              title: "How to Track Your Bus",
-              content:
-              "1. Open the Home page.\n"
-                  "2. View Live Bus Status.\n"
-                  "3. Tap 'Open Map' for full tracking.\n"
-                  "4. Check ETA and bus arrival updates.",
-            ),
-            const SizedBox(height: 20),
-
-            // 🔷 COMMON ISSUES
-            _infoCard(
-              title: "Common Issues",
-              content:
-              "• Bus not updating → Check internet.\n"
-                  "• Location not working → Enable GPS.\n"
-                  "• No notifications → Enable notification permission.",
-            ),
-            const SizedBox(height: 20),
-
-            // 🔷 CONTACT
-            _infoCard(
-              title: "Contact Support",
-              content:
-              "For technical issues :\n\n"
-                  "Email: support@bustrackpro.com\n"
-                  "Phone: +91 9876543210",
-            ),
-            const SizedBox(height: 30),
-          ],
-        ),
-      ),
-    );
-  }
-}

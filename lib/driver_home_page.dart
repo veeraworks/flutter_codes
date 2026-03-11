@@ -13,6 +13,7 @@ import 'driver_profile_page.dart';
 import 'driver_settings_page.dart';
 import 'issue_reporting_page.dart';
 import 'driver_map_page.dart';
+import 'utils/app_logger.dart';
 
 class DriverHomePage extends StatefulWidget {
   const DriverHomePage({super.key});
@@ -61,13 +62,57 @@ class _DriverHomePageState extends State<DriverHomePage>
 
   // 🗺️ MAP STATE
   GoogleMapController? _mapController;
-  Marker? _driverMarker;
-  LatLng _currentLatLng = const LatLng(13.0827, 80.2707);
 
   // 🧵 ROUTE POLYLINE STATE
   final List<LatLng> _routePoints = [];
 
   // ✅ SHIFT FUNCTION (MOVE HERE)
+  String? _pickText(dynamic value) {
+    if (value == null) return null;
+    final text = value.toString().trim();
+    if (text.isEmpty || text == "-") return null;
+    return text;
+  }
+
+  Map<String, dynamic> _extractProfile(Map<String, dynamic> data) {
+    if (data["driver"] is Map) {
+      return Map<String, dynamic>.from(data["driver"] as Map);
+    }
+    return data;
+  }
+
+  Future<Map<String, dynamic>?> _fetchDriverProfileByPhone(String phone) async {
+    final encodedPhone = Uri.encodeQueryComponent(phone);
+    final endpoints = [
+      "/auth/driver-profile/$phone",
+      "/auth/driver-profile?phone=$encodedPhone",
+      "/auth/profile?phone=$encodedPhone",
+      "/drivers/profile?phone=$encodedPhone",
+      "/profile?phone=$encodedPhone",
+    ];
+    Map<String, dynamic>? fallbackProfile;
+
+    for (final endpoint in endpoints) {
+      final response = await ApiService.get(endpoint);
+      appLog("Driver profile fetch $endpoint -> ${response.statusCode}");
+      if (response.statusCode != 200) continue;
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) continue;
+
+      final profile = _extractProfile(decoded);
+      final hasBusId = _pickText(profile["busId"]) != null;
+      final hasRoute = _pickText(profile["busName"]) != null ||
+          _pickText(profile["routeName"]) != null ||
+          _pickText(profile["route"]) != null;
+
+      if (hasBusId && hasRoute) return profile;
+      if (hasBusId) fallbackProfile = profile;
+    }
+
+    return fallbackProfile;
+  }
+
   String _getShiftByTime() {
     final now = DateTime.now();
     final hour = now.hour;
@@ -180,20 +225,23 @@ class _DriverHomePageState extends State<DriverHomePage>
     final prefs = await SharedPreferences.getInstance();
 
     setState(() {
-      // Permanent
       permBusNumber = prefs.getString("busNumber") ?? "-";
-      permRouteName = prefs.getString("routeName") ?? "-";
+      permRouteName =
+      ((prefs.getString("routeName")?.isNotEmpty ?? false) &&
+          prefs.getString("routeName") != "-")
+          ? prefs.getString("routeName")!.trim()
+          : "Not Assigned";
       shift = _getShiftByTime();
-      // Temporary
+
       isTempBusActive = prefs.getBool("isTempBusActive") ?? false;
       tempBusNumber = prefs.getString("tempBusNumber");
       tempRouteName = prefs.getString("tempRouteName");
     });
 
-    print("Permanent → $permBusNumber | $permRouteName");
-    print("Temporary Active → $isTempBusActive");
+    appLog("Route loaded → $permRouteName");
+
   }
-//===================== LISTEN TO TEMPORARY BUS CHANGES ==========================
+  //================ LISTEN TO TEMPORARY BUS CHANGES ==========================
   Future<void> _listenToTemporaryBus() async {
     final prefs = await SharedPreferences.getInstance();
     final permId = prefs.getString("busId");
@@ -297,7 +345,7 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _startLocationUpdates() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      print("GPS SERVICE DISABLED");
+      appLog("GPS SERVICE DISABLED");
       return;
     }
 
@@ -309,7 +357,7 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
-      print("LOCATION PERMISSION DENIED");
+      appLog("LOCATION PERMISSION DENIED");
       return;
     }
 
@@ -322,11 +370,11 @@ class _DriverHomePageState extends State<DriverHomePage>
       ),
     ).listen((position) {
 
-      print("GPS UPDATE → ${position.latitude}, ${position.longitude}");
-      print("RAW SPEED → ${position.speed} m/s");
+      appLog("GPS UPDATE → ${position.latitude}, ${position.longitude}");
+      appLog("RAW SPEED → ${position.speed} m/s");
 
       if (!tripStarted) {
-        print("GPS running but trip not started");
+        appLog("GPS running but trip not started");
         return;
       }
 
@@ -348,21 +396,13 @@ class _DriverHomePageState extends State<DriverHomePage>
 
       _lastSpeed = realSpeed;
 
-      print("SMOOTHED SPEED → $realSpeed m/s");
+      appLog("SMOOTHED SPEED → $realSpeed m/s");
 
       // ================= UI UPDATE =================
       if (!mounted) return;
 
       setState(() {
-        _currentLatLng = latLng;
 
-        _driverMarker = Marker(
-          markerId: const MarkerId("driver"),
-          position: latLng,
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueGreen,
-          ),
-        );
 
         if (_routePoints.isEmpty ||
             Geolocator.distanceBetween(
@@ -390,7 +430,7 @@ class _DriverHomePageState extends State<DriverHomePage>
           "speed": realSpeed, // 🔥 stable speed
           "updatedAt": ServerValue.timestamp,
         }).catchError((e) {
-          print("Failed to update bus location: $e");
+          appLog("Failed to update bus location: $e");
         });
       }
     });
@@ -424,7 +464,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         },
       );
 
-      print("START TRIP RESPONSE → ${response.body}");
+      appLog("START TRIP RESPONSE → ${response.body}");
 
       if (response.statusCode != 200) {
         if (!mounted) return;
@@ -435,7 +475,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       }
 
       if (response.body.isEmpty) {
-        print("Start trip API returned empty response");
+        appLog("Start trip API returned empty response");
         return;
       }
 
@@ -444,9 +484,9 @@ class _DriverHomePageState extends State<DriverHomePage>
       try {
         data = jsonDecode(response.body);
       } catch (e) {
-        print("JSON decode failed");
+        appLog("JSON decode failed");
       }
-      print("TripId received → ${data["tripId"]}");
+      appLog("TripId received → ${data["tripId"]}");
 
 // If backend returned tripId
       if (data["tripId"] != null) {
@@ -459,7 +499,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         currentTripId = prefs.getString("activeTripId");
       }
 
-      print("Current TripId → $currentTripId");
+      appLog("Current TripId → $currentTripId");
 
 // Update UI
       if (mounted) {
@@ -504,7 +544,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
 
     } catch (e) {
-      print("START TRIP ERROR → $e");
+      appLog("START TRIP ERROR → $e");
 
       if (!mounted) return;
 
@@ -520,11 +560,11 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     String? tripId = currentTripId ?? prefs.getString("activeTripId");
 
-    print("END TRIP busId = $busId");
-    print("END TRIP tripId = $tripId");
+    appLog("END TRIP busId = $busId");
+    appLog("END TRIP tripId = $tripId");
 
     if (busId == null || tripId == null) {
-      print("❌ End trip failed. Missing trip data.");
+      appLog("❌ End trip failed. Missing trip data.");
       return;
     }
 
@@ -539,7 +579,7 @@ class _DriverHomePageState extends State<DriverHomePage>
         },
       );
 
-      print("END TRIP RESPONSE → ${response.body}");
+      appLog("END TRIP RESPONSE → ${response.body}");
 
       // 🔥 CLEAR LOCAL DATA
       await prefs.setBool("trackingActive", false);
@@ -563,7 +603,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
 
     } catch (e) {
-      print("❌ End Trip Error → $e");
+      appLog("❌ End Trip Error → $e");
     }
   }
   Future<void> _refreshDriverProfile() async {
@@ -572,36 +612,54 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     if (phone == null) return;
 
-    final response =
-    await ApiService.get("/auth/driver-profile/$phone");
+    final profile = await _fetchDriverProfileByPhone(phone);
+    appLog("Driver profile response → $profile");
+    if (profile == null) return;
 
-    if (response.statusCode != 200) return;
+    final resolvedName = _pickText(profile["name"]) ?? "-";
 
-    final data = jsonDecode(response.body);
+    final resolvedBusId = _pickText(profile["busId"]) ?? "-";
 
-    // 🔥 SAVE UPDATED VALUES
-    await prefs.setString("driverName", data["name"] ?? "-");
-    await prefs.setString("busId", data["busId"] ?? "-");
-    await prefs.setString("busNumber", data["busNumber"] ?? data["busId"] ?? "-");
-    await prefs.setString("routeName", data["busName"] ?? "-");
-    await prefs.setString("licenseNo", data["licenseNo"] ?? "-");
-    await prefs.setString("shift", data["shift"] ?? "-");
+    final resolvedBusNumber =
+        _pickText(profile["busNumber"]) ?? resolvedBusId;
+
+    final resolvedRouteName = _pickText(profile["busName"]) ??
+        _pickText(profile["routeName"]) ??
+        _pickText(profile["route"]);
+
+    final resolvedLicense = _pickText(profile["licenseNo"]) ?? "-";
+
+    final resolvedShift = _pickText(profile["shift"]) ?? "-";
+
+    final existingRouteName = _pickText(prefs.getString("routeName"));
+    final finalRouteName =
+        resolvedRouteName ??
+            existingRouteName ??
+            profile["busName"] ??
+            "Not Assigned";
+
+    await prefs.setString("driverName", resolvedName);
+    await prefs.setString("busId", resolvedBusId);
+    await prefs.setString("busNumber", resolvedBusNumber);
+    await prefs.setString("routeName", finalRouteName);
+    await prefs.setString("licenseNo", resolvedLicense);
+    await prefs.setString("shift", resolvedShift);
 
     setState(() {
-      permBusNumber = data["busNumber"] ?? data["busId"] ?? "-";
-      permRouteName = data["busName"] ?? "-";
-      permBusId = data["busId"];
+      permBusNumber = resolvedBusNumber;
+      permRouteName = finalRouteName;
+      permBusId = resolvedBusId;
       shift = _getShiftByTime();
     });
 
-    // 🔥 UPDATE BACKGROUND SERVICE IF TRIP ACTIVE
+    await _loadBusInfo();
+
     if (tripStarted && busId != null) {
       FlutterBackgroundService().invoke("setBusId", {
         "busId": busId,
       });
     }
   }
-
   // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {

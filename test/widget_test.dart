@@ -1,30 +1,22 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:project_spt/main.dart';
+import 'package:project_spt/about_page.dart';
+import 'package:project_spt/help_page.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('Help page renders common support topics', (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(home: HelpPage()));
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    expect(find.text('Help & Support'), findsOneWidget);
+    expect(find.text('How to track my bus?'), findsOneWidget);
+    expect(find.text('Temporary Bus Change?'), findsOneWidget);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  testWidgets('About page renders product information', (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(home: AboutApp()));
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('About BusTrackPro'), findsOneWidget);
+    expect(find.text('BusTrackPro'), findsOneWidget);
+    expect(find.textContaining('Version: 1.0.0'), findsOneWidget);
   });
 }

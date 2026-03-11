@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'service/api_service.dart';
+import 'utils/app_logger.dart';
 
 class IssueReportingPage extends StatefulWidget {
   const IssueReportingPage({super.key});
@@ -92,20 +92,12 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
     });
 
     try {
-      await http.post(
-        Uri.parse(
-            "https://null-sheldon-unstudded.ngrok-free.dev/drivers/report-issue"),
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": "smartbus_2026_secure",
-        },
-        body: jsonEncode({
-          "busId": busId,
-          "issueType": issue,
-        }),
+      await ApiService.reportDriverIssue(
+        busId: busId,
+        issueType: issue,
       );
     } catch (e) {
-      print("Notification error: $e");
+      appLog("Notification error: $e");
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -129,17 +121,11 @@ class _IssueReportingPageState extends State<IssueReportingPage> {
     });
 
     try {
-      await http.post(
-        Uri.parse(
-            "https://null-sheldon-unstudded.ngrok-free.dev/drivers/clear-issue"),
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": "smartbus_2026_secure",
-        },
-        body: jsonEncode({"busId": busId}),
+      await ApiService.clearDriverIssue(
+        busId: busId,
       );
     } catch (e) {
-      print("Clear notification error: $e");
+      appLog("Clear notification error: $e");
     }
 
     ScaffoldMessenger.of(context).showSnackBar(

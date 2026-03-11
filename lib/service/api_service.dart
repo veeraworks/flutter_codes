@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../utils/app_logger.dart';
 
 class ApiService {
-
-  // 🔥 Change this once when moving to production
+  // Change this once when moving to production
   static const String baseUrl =
       "https://null-sheldon-unstudded.ngrok-free.dev";
 
@@ -50,7 +50,6 @@ class ApiService {
     required double destLng,
     required String nextStop,
   }) async {
-
     final uri = Uri.parse("$baseUrl/drivers/eta").replace(
       queryParameters: {
         "originLat": originLat.toString(),
@@ -61,18 +60,42 @@ class ApiService {
         "nextStop": nextStop,
       },
     );
-    print("📡 ETA URL: $uri");
+    appLog("ETA URL: $uri");
 
     final response = await http.get(
       uri,
       headers: headers,
     );
-    print("📡 ETA Status: ${response.statusCode}");
+    appLog("ETA Status: ${response.statusCode}");
 
     if (response.statusCode != 200) {
-      print("❌ ETA Failed: ${response.body}");
+      appLog("ETA Failed: ${response.body}");
       return null;
     }
     return jsonDecode(response.body);
+  }
+
+  static Future<http.Response> reportDriverIssue({
+    required String busId,
+    required String issueType,
+  }) {
+    return post(
+      "/drivers/report-issue",
+      {
+        "busId": busId,
+        "issueType": issueType,
+      },
+    );
+  }
+
+  static Future<http.Response> clearDriverIssue({
+    required String busId,
+  }) {
+    return post(
+      "/drivers/clear-issue",
+      {
+        "busId": busId,
+      },
+    );
   }
 }

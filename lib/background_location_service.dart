@@ -6,6 +6,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'utils/app_logger.dart';
 
 String? activeBusId;
 double _lastSpeed = 0;
@@ -80,12 +81,12 @@ Future<void> onStart(ServiceInstance service) async {
   /// RECEIVE BUS ID FROM DRIVER APP
   service.on("setBusId").listen((event) {
     activeBusId = event?["busId"]?.toString().toUpperCase();
-    print("🔥 Background busId updated → $activeBusId");
+    appLog("🔥 Background busId updated → $activeBusId");
   });
 
   /// STOP SERVICE EVENT
   service.on("stopService").listen((event) {
-    print("🛑 Background service stopping...");
+    appLog("🛑 Background service stopping...");
     service.stopSelf();
   });
 
@@ -94,7 +95,7 @@ Future<void> onStart(ServiceInstance service) async {
 
     if (service is AndroidServiceInstance) {
       if (!await service.isForegroundService()) {
-        print("⚠ Service not in foreground, stopping timer");
+        appLog("⚠ Service not in foreground, stopping timer");
         timer.cancel();
         return;
       }
@@ -143,7 +144,7 @@ Future<void> onStart(ServiceInstance service) async {
       });
 
     } catch (e) {
-      print("❌ Background GPS error: $e");
+      appLog("❌ Background GPS error: $e");
     }
   });
 }

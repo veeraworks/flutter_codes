@@ -4,6 +4,7 @@ import 'service/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'driver_home_page.dart';
 import 'package:flutter/services.dart';
+import 'utils/app_logger.dart';
 
 class DriverOtpPage extends StatefulWidget {
   final String phoneNumber;
@@ -49,7 +50,7 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
 
           final driver = data["driver"];
 
-          print("Driver Data → $driver"); // 🔍 Debug
+          appLog("Driver Data → $driver"); // 🔍 Debug
 
           final prefs = await SharedPreferences.getInstance();
 
@@ -60,12 +61,20 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
 
           await prefs.setString("busId", driver["busId"] ?? "");
           await prefs.setString("permBusId", driver["busId"] ?? "");
-          await prefs.setString("routeName", driver["busName"] ?? "");
+          await prefs.setString(
+            "busNumber",
+            driver["busNumber"] ?? driver["busId"] ?? "",
+          );
+          await prefs.setString(
+            "routeName",
+            driver["busName"] ?? driver["routeName"] ?? driver["route"] ?? "",
+          );
           await prefs.setString("shift", driver["shift"] ?? "");
 
           await prefs.setBool("isLoggedIn", true);
           await prefs.setString("role", "driver");
           await prefs.setBool("isTempBusActive", false);
+          await prefs.remove("pendingDriverPhone");
 
           if (!mounted) return;
 

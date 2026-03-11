@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'dart:math';
+import 'utils/app_logger.dart';
 
 class MapPage extends StatefulWidget {
   const MapPage({super.key});
@@ -89,7 +90,6 @@ class _MapPageState extends State<MapPage> {
 
 
   StreamSubscription<DatabaseEvent>? _busListener;
-  StreamSubscription<DatabaseEvent>? _stopListener;
   StreamSubscription<DatabaseEvent>? _polylineListener;
 
   double? etaMinutes;
@@ -120,11 +120,11 @@ class _MapPageState extends State<MapPage> {
     if (busId != null) {
       await FirebaseMessaging.instance
           .subscribeToTopic("route_${busId!.toUpperCase()}");
-      print("✅ Subscribed to route_$busId");
+      appLog("✅ Subscribed to route_$busId");
     }
 
     if (busId == null) {
-      print("❌ busId not found");
+      appLog("❌ busId not found");
       return;
     }
 
@@ -188,8 +188,8 @@ class _MapPageState extends State<MapPage> {
     busId = prefs.getString("busId")?.toUpperCase();
     stopName = prefs.getString("boardingPoint");
 
-    print("Loaded busId: $busId");
-    print("Loaded stopName: $stopName");
+    appLog("Loaded busId: $busId");
+    appLog("Loaded stopName: $stopName");
   }
 
   Future<void> _getStudentLocation() async {
@@ -359,8 +359,8 @@ class _MapPageState extends State<MapPage> {
                     .replaceAll(" ", "")
                     .trim();
 
-        print("Route Stop: $currentStopName");
-        print("Student Stop: $stopName");
+        appLog("Route Stop: $currentStopName");
+        appLog("Student Stop: $stopName");
         double markerHue = BitmapDescriptor.hueOrange;
 
         // 🟢 NEXT STOP
@@ -392,8 +392,8 @@ class _MapPageState extends State<MapPage> {
 
         if (isStudentStop) {
           _studentStopLocation = pos;
-          print("✅ STUDENT STOP MATCHED: $currentStopName");
-          print("📍 Student Stop Location: $_studentStopLocation");
+          appLog("✅ STUDENT STOP MATCHED: $currentStopName");
+          appLog("📍 Student Stop Location: $_studentStopLocation");
         }
       }
 
@@ -405,7 +405,7 @@ class _MapPageState extends State<MapPage> {
         _fitRouteToScreen(routePoints);
       }
     } catch (e) {
-      print("Route fetch error: $e");
+      appLog("Route fetch error: $e");
     }
   }
 
@@ -417,7 +417,7 @@ class _MapPageState extends State<MapPage> {
     final connectivity = await Connectivity().checkConnectivity();
 
     if (connectivity == ConnectivityResult.none) {
-      print("No internet");
+      appLog("No internet");
       return;
     }
 
@@ -477,7 +477,7 @@ class _MapPageState extends State<MapPage> {
           return;
         }
       }
-      print("🔥 BUS REALTIME EVENT TRIGGERED");
+      appLog("🔥 BUS REALTIME EVENT TRIGGERED");
 
       // mark GPS update
       _gpsJustUpdated = true;
@@ -664,7 +664,7 @@ class _MapPageState extends State<MapPage> {
   Future<void> _listenRoutePolyline() async {
     if (busId == null) return;
 
-    print("🔥 Listening encoded polyline for $busId");
+    appLog("🔥 Listening encoded polyline for $busId");
 
     _polylineListener?.cancel();
 
@@ -676,18 +676,18 @@ class _MapPageState extends State<MapPage> {
       final data = event.snapshot.value;
 
       if (data == null) {
-        print("❌ No polyline data");
+        appLog("❌ No polyline data");
         return;
       }
 
       // ✅ Firebase gives STRING
       String encodedPolyline = data.toString();
       if (encodedPolyline.isEmpty) {
-        print("Polyline empty");
+        appLog("Polyline empty");
         return;
       }
 
-      print("✅ Polyline string received");
+      appLog("✅ Polyline string received");
 
       PolylinePoints polylinePoints = PolylinePoints();
 
@@ -699,7 +699,7 @@ class _MapPageState extends State<MapPage> {
           .toList();
 
       if (points.isEmpty) {
-        print("Decoded polyline empty");
+        appLog("Decoded polyline empty");
         return;
       }
 
@@ -898,19 +898,19 @@ class _MapPageState extends State<MapPage> {
 
 // ================= BACKEND SMART ETA =================
   Future<void> _fetchETAFromBackend() async {
-    print("==== CALLING ETA ====");
-    print("busId: $busId");
-    print("busLocation: $_busLocation");
-    print("studentStopLocation: $_studentStopLocation");
+    appLog("==== CALLING ETA ====");
+    appLog("busId: $busId");
+    appLog("busLocation: $_busLocation");
+    appLog("studentStopLocation: $_studentStopLocation");
 
     if (_busLocation != null) {
-      print("originLat: ${_busLocation!.latitude}");
-      print("originLng: ${_busLocation!.longitude}");
+      appLog("originLat: ${_busLocation!.latitude}");
+      appLog("originLng: ${_busLocation!.longitude}");
     }
 
     if (_studentStopLocation != null) {
-      print("destLat: ${_studentStopLocation!.latitude}");
-      print("destLng: ${_studentStopLocation!.longitude}");
+      appLog("destLat: ${_studentStopLocation!.latitude}");
+      appLog("destLng: ${_studentStopLocation!.longitude}");
     }
 
     if (busId == null ||
@@ -926,7 +926,7 @@ class _MapPageState extends State<MapPage> {
           .timeout(const Duration(seconds: 8));
 
       if (response.statusCode != 200) {
-        print("ETA API failed");
+        appLog("ETA API failed");
         return;
       }
 
@@ -974,7 +974,7 @@ class _MapPageState extends State<MapPage> {
         }
       }
     } catch (e) {
-      print("❌ ETA error: $e");
+      appLog("❌ ETA error: $e");
     }
   }
 
@@ -983,7 +983,6 @@ class _MapPageState extends State<MapPage> {
     _animationTimer?.cancel();
     _etaTimer?.cancel();
     _busListener?.cancel();
-    _stopListener?.cancel();
     _roadAnimationTimer?.cancel();
     _rotationTimer?.cancel();
     _predictiveTimer?.cancel();
@@ -991,6 +990,7 @@ class _MapPageState extends State<MapPage> {
     _cameraTimer?.cancel();
     _countdownTimer?.cancel();
     _polylineListener?.cancel();
+    _mapController?.dispose();
     super.dispose();
   }
 
@@ -1127,3 +1127,4 @@ class _MapPageState extends State<MapPage> {
     );
   }
 }
+

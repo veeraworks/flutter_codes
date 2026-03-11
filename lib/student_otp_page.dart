@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'service/api_service.dart';
 import 'student_home_page.dart';
+import 'utils/app_logger.dart';
 
 class StudentOtpPage extends StatefulWidget {
   final String verificationId;
@@ -103,7 +104,7 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
 
     } catch (e) {
 
-      print("OTP LOGIN ERROR: $e");
+      appLog("OTP LOGIN ERROR: $e");
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Login failed")),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'utils/app_logger.dart';
 
 class DriverProfilePage extends StatefulWidget {
   const DriverProfilePage({super.key});
@@ -23,26 +24,47 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
     _loadDriverData();
   }
 
+  // ================= LOAD DRIVER DATA =================
   Future<void> _loadDriverData() async {
+
     final prefs = await SharedPreferences.getInstance();
 
-    print("RouteName from prefs: ${prefs.getString("routeName")}");
+    String? savedRoute = prefs.getString("routeName");
+    final normalizedRoute = (savedRoute != null &&
+            savedRoute.trim().isNotEmpty &&
+            savedRoute.trim() != "-")
+        ? savedRoute.trim()
+        : null;
+
+    appLog("DriverProfilePage routeName → $savedRoute");
 
     if (!mounted) return;
 
     setState(() {
+
       driverName = prefs.getString("driverName") ?? "-";
+
       busId = prefs.getString("busId") ?? "-";
-      routeName = prefs.getString("routeName") ?? "-";
-      busNumber = prefs.getString("busNumber") ?? "-";
+
+      busNumber = prefs.getString("busNumber") ?? busId;
+
       phoneNumber = prefs.getString("phone") ?? "-";
+
       licenseNo = prefs.getString("licenseNo") ?? "-";
+
+      routeName = (normalizedRoute != null)
+          ? normalizedRoute
+          : "Not Assigned";
+
     });
   }
 
+  // ================= UI =================
   @override
   Widget build(BuildContext context) {
+
     return Scaffold(
+
       backgroundColor: const Color(0xFFF6F3F7),
 
       appBar: AppBar(
@@ -54,13 +76,15 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
 
       body: Padding(
         padding: const EdgeInsets.all(16),
+
         child: Column(
           children: [
 
-            /// PROFILE CARD
+            // PROFILE CARD
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
+
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(18),
@@ -103,9 +127,11 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
                   ProfileRow("Route", routeName),
                   ProfileRow("License", licenseNo),
                   ProfileRow("Phone", phoneNumber),
+
                 ],
               ),
             ),
+
           ],
         ),
       ),
@@ -113,7 +139,10 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
   }
 }
 
+// ================= PROFILE ROW =================
+
 class ProfileRow extends StatelessWidget {
+
   final String label;
   final String value;
 
@@ -121,6 +150,7 @@ class ProfileRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
 
@@ -128,6 +158,7 @@ class ProfileRow extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
 
         children: [
+
           Text(
             label,
             style: const TextStyle(
@@ -143,6 +174,7 @@ class ProfileRow extends StatelessWidget {
               fontSize: 15,
             ),
           ),
+
         ],
       ),
     );
