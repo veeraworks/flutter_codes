@@ -149,13 +149,7 @@ class _StudentHomePageState extends State<StudentHomePage>
     _listenToBusIssues();
     _listenToBus();
     _listenToTemporaryBus();
-    _fetchEta();
 
-    _etaTimer = Timer.periodic(
-      const Duration(seconds: 10),
-          (_) => _fetchEta(),
-    );
-    // Start GPS tracking
   }
   Future<void> _initLocationPermission() async {
     try {
@@ -331,13 +325,25 @@ class _StudentHomePageState extends State<StudentHomePage>
     await prefs.setString("studentName", data["name"] ?? "");
     await prefs.setString("stopName", data["boardingPoint"] ?? "");
 
+
     setState(() {
       studentName = data["name"];
       routeName = data["busName"];
       displayRoute = data["busName"];
       busId = newBusId;
     });
-    appLog("🔥 FULL STUDENT PROFILE RESPONSE = $data");
+
+// ⭐ START ETA AFTER BUSID IS READY
+    if (busId != null) {
+      _fetchEta();
+
+      _etaTimer = Timer.periodic(
+        const Duration(seconds: 10),
+            (_) => _fetchEta(),
+      );
+    }
+
+      appLog("🔥 FULL STUDENT PROFILE RESPONSE = $data");
   }
 
   Future<void> _requestPermission() async {
@@ -541,10 +547,7 @@ class _StudentHomePageState extends State<StudentHomePage>
   }
   Future<void> _listenToBus() async {
 
-    final prefs = await SharedPreferences.getInstance();
-
-    String? originalBus = prefs.getString("busId");
-    String? currentBus = tempBus ?? originalBus;
+    String? currentBus = tempBus ?? busId;
 
     if (currentBus == null) return;
 
@@ -555,7 +558,7 @@ class _StudentHomePageState extends State<StudentHomePage>
     _busListener = FirebaseDatabase.instance
         .ref("buses/$currentBus/current")
         .onValue
-        .listen((event) {
+        .listen((event)  {
 
       if (!mounted) return;
 
@@ -678,8 +681,9 @@ class _StudentHomePageState extends State<StudentHomePage>
     try {
 
       // 🔴 Avoid API call if bus not active
-      if (busId == null || !_busActive) return;
+      if (busId == null) return;
 
+      appLog("🚀 Calling ETA API for $busId");
       final response = await ApiService.get("/eta/$busId");
 
       if (response.statusCode != 200) return;
