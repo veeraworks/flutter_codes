@@ -63,6 +63,10 @@ class _DriverMapPageState extends State<DriverMapPage> {
   double _driverBearing = 0;
   double _currentSpeed = 0;
 
+  LatLng? _previousBusPosition;
+  LatLng? _animatedBusPosition;
+  Timer? _busAnimationTimer;
+
   final KalmanLatLng _gpsKalman = KalmanLatLng();
 
   final DatabaseReference _busRef =
@@ -103,7 +107,19 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
   String? busId;
   bool _firstLocationFix = false;
+  bool _isMovementSignificant(LatLng newPos) {
 
+    if (_driverLocation == null) return true;
+
+    double distance = Geolocator.distanceBetween(
+      _driverLocation!.latitude,
+      _driverLocation!.longitude,
+      newPos.latitude,
+      newPos.longitude,
+    );
+
+    return distance > 2;
+  }
 // ================= INIT =================
 
   @override
@@ -144,56 +160,61 @@ class _DriverMapPageState extends State<DriverMapPage> {
 // ================= BUS SMOOTH ANIMATION =================
   Future<void> _animateBus(LatLng newPosition) async {
 
-    if (_driverLocation == null) {
-      _driverLocation = newPosition;
+    if (_previousBusPosition == null) {
+      _previousBusPosition = newPosition;
+      _animatedBusPosition = newPosition;
 
       if (mounted) {
         setState(() {
+          _driverLocation = newPosition;
           _updateDriverMarker();
         });
       }
-
-      // start camera follow
-      _startNavigationCamera(_driverLocation!);
-
-      // draw route once
-      _updatePolyline();
       return;
     }
 
-    const int steps = 4;
+    _busAnimationTimer?.cancel();
 
-    for (int i = 0; i < steps; i++) {
+    const int animationDuration = 1000;
+    const int frameRate = 60;
 
-      await Future.delayed(
-        Duration(milliseconds: _calculateAnimationDelay()),
-      );
+    int steps = animationDuration ~/ (1000 ~/ frameRate);
 
-      if (_driverLocation == null) return;
+    double latStep =
+        (newPosition.latitude - _previousBusPosition!.latitude) / steps;
 
-      LatLng predicted = _predictNextPosition(newPosition);
+    double lngStep =
+        (newPosition.longitude - _previousBusPosition!.longitude) / steps;
 
-      _driverLocation = LatLng(
-        _driverLocation!.latitude +
-            (predicted.latitude - _driverLocation!.latitude) * 0.3,
-        _driverLocation!.longitude +
-            (predicted.longitude - _driverLocation!.longitude) * 0.3,
-      );
+    int currentStep = 0;
 
-      if (!mounted) return;
+    _busAnimationTimer =
+        Timer.periodic(const Duration(milliseconds: 16), (timer) {
 
-      setState(() {
-        _updateDriverMarker();
-      });
+          if (currentStep >= steps) {
+            timer.cancel();
+            _previousBusPosition = newPosition;
+            return;
+          }
 
-      // camera follow
-      _startNavigationCamera(_driverLocation!);
-    }
+          double lat =
+              _previousBusPosition!.latitude + (latStep * currentStep);
 
-    // ⭐ update polyline once after animation
-    _updatePolyline();
+          double lng =
+              _previousBusPosition!.longitude + (lngStep * currentStep);
+
+          _animatedBusPosition = LatLng(lat, lng);
+
+          if (!mounted) return;
+
+          setState(() {
+            _driverLocation = _animatedBusPosition;
+            _updateDriverMarker();
+          });
+
+          currentStep++;
+        });
   }
-
   void _updatePolyline() {
 
     if (_routePoints.isEmpty) return;
@@ -270,9 +291,6 @@ class _DriverMapPageState extends State<DriverMapPage> {
             if (drift < 3) return;
           }
 
-          // 🔥 USE REAL LOCATION (NO ROUTE SNAPPING)
-          _gpsKalman.process(rawPoint);
-
           // FIRST GPS FIX
           if (_driverLocation == null) {
 
@@ -313,7 +331,11 @@ class _DriverMapPageState extends State<DriverMapPage> {
           }
 
           // 🔥 BUS MOVES EXACTLY WITH DRIVER
-          await _animateBus(rawPoint);
+          final filtered = _gpsKalman.process(rawPoint);
+
+          if (_isMovementSignificant(filtered)) {
+            await _animateBus(filtered);
+          }
 
           _checkStopArrival();
           _updateStepDistance();

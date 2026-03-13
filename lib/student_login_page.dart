@@ -1,8 +1,6 @@
 import 'dart:convert';
 import 'service/api_service.dart';
 import 'package:flutter/material.dart';
-import 'student_home_page.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'student_otp_page.dart';
 import 'student_signup_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -37,8 +35,6 @@ class _StudentLoginPageState extends State<StudentLoginPage>
     _shakeAnimation = Tween<double>(begin: 0, end: 10)
         .chain(CurveTween(curve: Curves.elasticIn))
         .animate(_shakeController);
-
-    _checkAutoLogin();
   }
 
   @override
@@ -51,14 +47,16 @@ class _StudentLoginPageState extends State<StudentLoginPage>
 
   // ✅ MANUAL LOGIN (Firebase NOT touched)
   Future<void> _login() async {
+
     String studentId = idController.text.trim().toUpperCase();
     String mobileNumber = passwordController.text.trim();
 
-    if (studentId.isEmpty || mobileNumber.isEmpty || mobileNumber.length < 10) {
+    if (studentId.isEmpty || mobileNumber.isEmpty || mobileNumber.length != 10) {
       _shakeController.forward(from: 0);
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Please fill all fields"),
+          content: Text("Please fill valid details"),
           backgroundColor: Colors.red,
         ),
       );
@@ -66,6 +64,8 @@ class _StudentLoginPageState extends State<StudentLoginPage>
     }
 
     try {
+
+      /// 🔎 CHECK STUDENT IN BACKEND FIRST
       final response = await ApiService.post(
         "/students/check-student",
         {
@@ -75,58 +75,72 @@ class _StudentLoginPageState extends State<StudentLoginPage>
       );
 
       if (response.body.isEmpty) {
-        throw Exception("Empty server response");
+        throw Exception("Empty response");
       }
 
       final Map<String, dynamic> data = jsonDecode(response.body);
 
       if (response.statusCode == 200 && data["student"] != null) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => StudentOtpPage(
-              verificationId: "DEV_MODE",
-              regNo: studentId,
-              phoneNumber: mobileNumber,
-              isSignup: false,
-            ),
-          ),
+
+        /// 📱 SEND FIREBASE OTP
+        await FirebaseAuth.instance.verifyPhoneNumber(
+
+          phoneNumber: "+91$mobileNumber",
+
+          verificationCompleted: (PhoneAuthCredential credential) async {
+            await FirebaseAuth.instance.signInWithCredential(credential);
+          },
+
+          verificationFailed: (FirebaseAuthException e) {
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(e.message ?? "OTP failed")),
+            );
+
+          },
+
+          codeSent: (String verificationId, int? resendToken) {
+
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => StudentOtpPage(
+                  verificationId: verificationId,
+                  regNo: studentId,
+                  phoneNumber: mobileNumber,
+                  isSignup: false,
+                ),
+              ),
+            );
+
+          },
+
+          codeAutoRetrievalTimeout: (String verificationId) {},
+
         );
 
       } else {
+
         _shakeController.forward(from: 0);
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text("Invalid Student ID or Mobile Number"),
             backgroundColor: Colors.red,
           ),
         );
+
       }
 
     } catch (e) {
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text("Server not reachable"),
           backgroundColor: Colors.red,
         ),
       );
-    }
-  }
-  // ---------------AUTO LOGIN----------------------------------------------
-  Future<void> _checkAutoLogin() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
 
-    bool isLoggedIn = prefs.getBool("isLoggedIn") ?? false;
-    String role = prefs.getString("role") ?? "";
-
-    if (isLoggedIn == true && role == "student") {
-
-      if (!mounted) return;
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const StudentHomePage()),
-      );
     }
   }
 

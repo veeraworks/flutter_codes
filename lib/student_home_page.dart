@@ -34,10 +34,7 @@ class _StudentHomePageState extends State<StudentHomePage>
   StreamSubscription<DatabaseEvent>? _issueListener;
   StreamSubscription<DatabaseEvent>? _tempBusListener;
   StreamSubscription<DatabaseEvent>? _busListener;
-  Timer? _etaTimer;
   String lastUpdatedText = "Just now";
-  Set<Polyline> _polylines = {};
-  List<LatLng> polylinePoints = [];
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
@@ -142,6 +139,7 @@ class _StudentHomePageState extends State<StudentHomePage>
     if (busId != null) {
       await _loadRoutePolyline(busId!);
       await fetchRemainingRoute();
+      _listenToEta();
     }
     // Attach listeners
     _listenForMessages();
@@ -264,7 +262,7 @@ class _StudentHomePageState extends State<StudentHomePage>
     _issueListener?.cancel();
     _busListener?.cancel();
     _tempBusListener?.cancel();
-    _etaTimer?.cancel();
+    _etaListener?.cancel();
     _notificationListener?.cancel();
     _miniMapController?.dispose();
     _animController.dispose();
@@ -332,16 +330,6 @@ class _StudentHomePageState extends State<StudentHomePage>
       displayRoute = data["busName"];
       busId = newBusId;
     });
-
-// ⭐ START ETA AFTER BUSID IS READY
-    if (busId != null) {
-      _fetchEta();
-
-      _etaTimer = Timer.periodic(
-        const Duration(seconds: 10),
-            (_) => _fetchEta(),
-      );
-    }
 
       appLog("🔥 FULL STUDENT PROFILE RESPONSE = $data");
   }
@@ -516,8 +504,8 @@ class _StudentHomePageState extends State<StudentHomePage>
 
         // 🔥 4️⃣ Re-attach listeners for new bus
         await _listenToBus();
-
         await _listenToBusIssues();
+        _listenToEta();
       }
 
       // ================= TEMP CLEARED =================
@@ -627,6 +615,46 @@ class _StudentHomePageState extends State<StudentHomePage>
       }
     });
   }
+  StreamSubscription? _etaListener;
+
+  void _listenToEta() {
+
+    String? currentBus = tempBus ?? busId;
+
+    if (currentBus == null) return;
+
+    _etaListener?.cancel();
+
+    _etaListener = FirebaseDatabase.instance
+        .ref("buses/$currentBus/eta")
+        .onValue
+        .listen((event) {
+
+      final data = event.snapshot.value;
+
+      if (data == null) return;
+
+      final map = Map<String, dynamic>.from(data as Map);
+
+      double? minutes = (map["etaMinutes"] as num?)?.toDouble();
+      double? distance = (map["distanceMeters"] as num?)?.toDouble();
+
+      if (!mounted) return;
+
+      setState(() {
+        if (distance != null && distance < 100) {
+          _etaMinutes = 0;
+        }
+        else if (distance != null && distance < 500) {
+          _etaMinutes = -1;
+        }
+        else {
+          _etaMinutes = minutes;
+        }
+      });
+
+    });
+  }
   //ISSUE REPORTING BY BUS ALERT
   Future<void> _listenToBusIssues() async {
     final prefs = await SharedPreferences.getInstance();
@@ -677,51 +705,6 @@ class _StudentHomePageState extends State<StudentHomePage>
       displayRoute = routeName;
     });
   }
-  Future<void> _fetchEta() async {
-    try {
-
-      // 🔴 Avoid API call if bus not active
-      if (busId == null) return;
-
-      appLog("🚀 Calling ETA API for $busId");
-      final response = await ApiService.get("/eta/$busId");
-
-      if (response.statusCode != 200) return;
-
-      final data = jsonDecode(response.body);
-
-      // 📏 Extract distance
-      double distanceMeters = 0;
-
-      String distanceText = data["distanceText"] ?? "";
-
-      if (distanceText.contains("km")) {
-        double km = double.tryParse(distanceText.replaceAll(RegExp('[^0-9.]'), '')) ?? 0;
-        distanceMeters = km * 1000;
-      } else {
-        distanceMeters = double.tryParse(distanceText.replaceAll(RegExp('[^0-9.]'), '')) ?? 0;
-      }
-
-      // ⏱ Convert seconds → minutes
-      double minutes = ((data["durationValue"] ?? 0) / 60).ceilToDouble();
-
-      // 🚍 Smart status logic
-      if (distanceMeters < 100) {
-        minutes = 0; // Bus arrived
-      } else if (distanceMeters < 500) {
-        minutes = -1; // Bus nearby
-      }
-
-      if (!mounted) return;
-
-      setState(() {
-        _etaMinutes = minutes;
-      });
-
-    } catch (e) {
-      appLog("ETA error: $e");
-    }
-  }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -732,32 +715,65 @@ class _StudentHomePageState extends State<StudentHomePage>
       drawer: Drawer(
         child: Column(
           children: [
+
+            // ===== Drawer Header =====
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(20, 50, 20, 20),
-              color: const Color(0xFF00BFA6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.fromLTRB(20, 60, 20, 24),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Color(0xFF00BFA6),
+                    Color(0xFF00897B),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: Row(
                 children: [
-                  CircleAvatar(
+                  const CircleAvatar(
                     radius: 28,
                     backgroundColor: Colors.white,
-                    child: Icon(Icons.person,
-                        size: 32, color: Color(0xFF00BFA6)),
+                    child: Icon(
+                      Icons.person,
+                      size: 30,
+                      color: Color(0xFF00BFA6),
+                    ),
                   ),
-                  SizedBox(height: 12),
-                  Text(
-                    studentName ?? "Student",
-                    style: const TextStyle(color: Colors.white, fontSize: 20),
+
+                  const SizedBox(width: 12),
+
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        studentName ?? "Student",
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Text(
+                        "Student Account",
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
                   ),
-                  Text("Student",
-                      style: TextStyle(color: Colors.white70)),
                 ],
               ),
             ),
 
-            _drawerItem(Icons.map, "View Map", () async {
+            const SizedBox(height: 10),
+            const Divider(thickness: 1),
 
+            // ===== Menu Items =====
+
+            _drawerItem(Icons.map, "View Map", () async {
               final prefs = await SharedPreferences.getInstance();
               String? busId = prefs.getString("busId");
 
@@ -781,23 +797,31 @@ class _StudentHomePageState extends State<StudentHomePage>
             }),
 
             _drawerItem(Icons.notifications, "Notifications", () {
-              Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const NotificationsPage()));
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const NotificationsPage()),
+              );
             }),
 
             _drawerItem(Icons.settings, "Settings", () {
-              Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const SettingsPage()));
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SettingsPage()),
+              );
             }),
 
             _drawerItem(Icons.info, "About App", () {
-              Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const AboutApp()));
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AboutApp()),
+              );
             }),
+
+            const Divider(thickness: 1),
 
             const Spacer(),
 
-            // ✅ LOGOUT CONNECTED
+            // ===== Logout =====
             _drawerItem(Icons.logout, "Logout", () {
               _logout();
             }),
@@ -806,7 +830,6 @@ class _StudentHomePageState extends State<StudentHomePage>
           ],
         ),
       ),
-
       // ================= BODY =================
       body: SingleChildScrollView(
         child: Column(
@@ -829,14 +852,21 @@ class _StudentHomePageState extends State<StudentHomePage>
               position: _slideAnim,
               child: FadeTransition(
                 opacity: _fadeAnim,
-                child: Container(
+                child:Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(20, 40, 20, 28),
+                  padding: const EdgeInsets.fromLTRB(20, 50, 20, 32),
                   decoration: const BoxDecoration(
-                    color: Color(0xFF00BFA6),
+                    gradient: LinearGradient(
+                      colors: [
+                        Color(0xFF00BFA6),
+                        Color(0xFF00897B),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
                     borderRadius: BorderRadius.only(
-                      bottomLeft: Radius.circular(24),
-                      bottomRight: Radius.circular(24),
+                      bottomLeft: Radius.circular(28),
+                      bottomRight: Radius.circular(28),
                     ),
                   ),
                   child: Column(
@@ -859,7 +889,7 @@ class _StudentHomePageState extends State<StudentHomePage>
                       const SizedBox(height: 22),
 
                       Text(
-                        'Welcome, ${studentName ?? "Student"}',
+                        'Welcome back, ${studentName ?? "Student"}',
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 26,
@@ -928,20 +958,27 @@ class _StudentHomePageState extends State<StudentHomePage>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Live Bus Status',
-                      style: TextStyle(fontSize: 19)),
+                  const Text(
+                    'Live Bus Status',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                   const SizedBox(height: 10),
 
                   FadeTransition(
                     opacity: _fadeAnim,
                     child: Container(
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(18),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.05),
-                            blurRadius: 10,
+                            color: Colors.black.withOpacity(0.08),
+                            blurRadius: 14,
+                            offset: const Offset(0, 6),
                           ),
                         ],
                       ),
@@ -1047,18 +1084,20 @@ class _StudentHomePageState extends State<StudentHomePage>
 
                           AnimatedContainer(
                             duration: const Duration(milliseconds: 400),
+                            margin: const EdgeInsets.only(bottom: 12),
                             curve: Curves.easeOut,
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              borderRadius: BorderRadius.circular(16),
+                              borderRadius: BorderRadius.circular(18),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withOpacity(0.06),
-                                  blurRadius: 12,
-                                  offset: const Offset(0, 4),
+                                  color: Colors.black.withOpacity(0.1),
+                                  blurRadius: 16,
+                                  offset: const Offset(0, 8),
                                 ),
                               ],
                             ),
+
                             child: Column(
                               children: [
 
@@ -1107,7 +1146,12 @@ class _StudentHomePageState extends State<StudentHomePage>
                                     width: double.infinity,
                                     padding: const EdgeInsets.symmetric(vertical: 14),
                                     decoration: const BoxDecoration(
-                                      color: Color(0xFF3E64FF),
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          Color(0xFF3E64FF),
+                                          Color(0xFF5B7FFF),
+                                        ],
+                                      ),
                                       borderRadius: BorderRadius.only(
                                         bottomLeft: Radius.circular(16),
                                         bottomRight: Radius.circular(16),
@@ -1174,7 +1218,7 @@ class _StudentHomePageState extends State<StudentHomePage>
                     right: 0,
                     top: 0,
                     child: Container(
-                      padding: const EdgeInsets.all(4),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: const BoxDecoration(
                         color: Colors.red,
                         shape: BoxShape.circle,
@@ -1206,10 +1250,30 @@ class _StudentHomePageState extends State<StudentHomePage>
   }
 
   Widget _drawerItem(IconData icon, String title, VoidCallback onTap) {
-    return ListTile(
-      leading: Icon(icon),
-      title: Text(title),
-      onTap: onTap,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      child: ListTile(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF00BFA6).withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: const Color(0xFF00BFA6)),
+        ),
+        title: Text(
+          title,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+        onTap: onTap,
+      ),
     );
   }
 }
@@ -1543,5 +1607,3 @@ class NotificationCard extends StatelessWidget {
     );
   }
 }
-
-
