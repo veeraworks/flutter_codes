@@ -415,8 +415,12 @@ class _DriverHomePageState extends State<DriverHomePage>
             ) > 5) {
 
           _routePoints.add(latLng);
-        }
 
+          // prevent memory overflow
+          if (_routePoints.length > 1000) {
+            _routePoints.removeAt(0);
+          }
+        }
       });
 
       _mapController?.animateCamera(
@@ -424,7 +428,7 @@ class _DriverHomePageState extends State<DriverHomePage>
       );
 
       // ================= FIREBASE UPDATE =================
-      if (busId != null && internetOn) {
+      if (busId != null && busId!.isNotEmpty && internetOn) {
         FirebaseDatabase.instance.ref("buses/$busId/current").update({
           "lat": position.latitude,
           "lng": position.longitude,
@@ -688,7 +692,9 @@ class _DriverHomePageState extends State<DriverHomePage>
     final finalRouteName =
         resolvedRouteName ??
             existingRouteName ??
+            profile["routeName"] ??
             profile["busName"] ??
+            profile["route"] ??
             "Not Assigned";
 
     await prefs.setString("driverName", resolvedName);
@@ -723,23 +729,23 @@ class _DriverHomePageState extends State<DriverHomePage>
           child: ListView(
             padding: EdgeInsets.zero,
             children: [
-              const DrawerHeader(
-                decoration: BoxDecoration(color: Color(0xFF00BFA6)),
+              DrawerHeader(
+                decoration: const BoxDecoration(color: Color(0xFF00BFA6)),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    CircleAvatar(
-                      radius: 28,
-                      backgroundColor: Colors.white,
-                      child: Icon(Icons.person, color: Color(0xFF00BFA6)),
-                    ),
-                    SizedBox(height: 12),
-                    Text(
-                      "Driver",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                  const CircleAvatar(
+                  radius: 28,
+                  backgroundColor: Colors.white,
+                  child: Icon(Icons.person, color: Color(0xFF00BFA6)),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  driverName,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
                       ),
                     ),
                   ],
