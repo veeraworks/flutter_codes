@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'service/api_service.dart';
 import 'driver_otp_page.dart';
 import 'utils/app_logger.dart';
@@ -45,7 +44,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
 
   // ================= LOGIN =================
   Future<void> driverLogin() async {
-
     final name = driverNameController.text.trim();
     final phone = phoneController.text.trim();
 
@@ -67,8 +65,6 @@ class _DriverLoginPageState extends State<DriverLoginPage>
     });
 
     try {
-
-      /// 🔎 CHECK DRIVER IN BACKEND
       final response = await ApiService.post(
         "/drivers/check-driver",
         {
@@ -83,13 +79,11 @@ class _DriverLoginPageState extends State<DriverLoginPage>
       } catch (e) {
         appLog("JSON parse error: $e");
       }
-
       if (response.statusCode == 200 && data["driver"] != null) {
 
         final driver = data["driver"];
 
         final prefs = await SharedPreferences.getInstance();
-
         await prefs.setString("busId", driver["busId"] ?? "");
         await prefs.setString("permBusId", driver["busId"] ?? "");
         await prefs.setString(
@@ -101,73 +95,43 @@ class _DriverLoginPageState extends State<DriverLoginPage>
           driver["busName"] ?? driver["routeName"] ?? driver["route"] ?? "",
         );
         await prefs.setString("shift", driver["shift"] ?? "");
+
         await prefs.setString("driverName", driver["name"] ?? "");
         await prefs.setString("licenseNo", driver["licenseNo"] ?? "");
         await prefs.setString("phone", phone);
 
+        // Keep pre-OTP state separate; mark full session only after OTP success.
         await prefs.setString("pendingDriverPhone", phone);
         await prefs.setBool("isTempBusActive", false);
 
-        /// 📱 SEND FIREBASE OTP
-        await FirebaseAuth.instance.verifyPhoneNumber(
 
-          phoneNumber: "+91$phone",
+        if (!mounted) return;
 
-          verificationCompleted: (PhoneAuthCredential credential) async {
-            await FirebaseAuth.instance.signInWithCredential(credential);
-          },
-
-          verificationFailed: (FirebaseAuthException e) {
-
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(e.message ?? "OTP failed")),
-            );
-
-          },
-
-          codeSent: (String verificationId, int? resendToken) {
-
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => DriverOtpPage(
-                  verificationId: verificationId,
-                  phoneNumber: phone,
-                  driverName: driver["name"] ?? "",
-                ),
-              ),
-            );
-
-          },
-
-          codeAutoRetrievalTimeout: (String verificationId) {},
-
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => DriverOtpPage(
+              phoneNumber: phone,
+              driverName: driver["name"],
+            ),
+          ),
         );
-
       } else {
-
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Driver not found")),
         );
-
       }
 
     } on TimeoutException {
-
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Server timeout")),
       );
-
     } catch (e) {
-
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Network error")),
       );
-
     } finally {
-
       if (mounted) setState(() => isLoading = false);
-
     }
   }
 

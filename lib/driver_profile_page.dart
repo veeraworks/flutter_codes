@@ -28,15 +28,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
 
     final prefs = await SharedPreferences.getInstance();
 
-    String? savedRoute = prefs.getString("routeName");
-
-    final normalizedRoute = (savedRoute != null &&
-        savedRoute.trim().isNotEmpty &&
-        savedRoute.trim() != "-")
-        ? savedRoute.trim()
-        : null;
-
-    appLog("DriverProfilePage routeName → $savedRoute");
+    appLog("DriverProfilePage routeName → ${prefs.getString("routeName")}");
 
     if (!mounted) return;
 
@@ -50,7 +42,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
 
       licenseNo = prefs.getString("licenseNo") ?? "-";
 
-      routeName = normalizedRoute ?? "Not Assigned";
+      routeName = prefs.getString("routeName") ?? "-";
 
     });
   }

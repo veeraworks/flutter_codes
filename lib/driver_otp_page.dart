@@ -1,20 +1,17 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'service/api_service.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'driver_home_page.dart';
 import 'package:flutter/services.dart';
 import 'utils/app_logger.dart';
 
 class DriverOtpPage extends StatefulWidget {
-  final String verificationId;
   final String phoneNumber;
   final String driverName;
 
   const DriverOtpPage({
     super.key,
-    required this.verificationId,
     required this.phoneNumber,
     required this.driverName,
   });
@@ -28,7 +25,6 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
   bool isLoading = false;
 
   Future<void> submitOtp() async {
-
     if (otpController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Enter OTP")),
@@ -39,53 +35,71 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
     setState(() => isLoading = true);
 
     try {
-
-      /// 🔐 VERIFY OTP WITH FIREBASE
-      PhoneAuthCredential credential = PhoneAuthProvider.credential(
-        verificationId: widget.verificationId,
-        smsCode: otpController.text.trim(),
-      );
-
-      await FirebaseAuth.instance.signInWithCredential(credential);
-
-      /// 🔥 OTP VERIFIED → CALL BACKEND
       final response = await ApiService.post(
-        "/drivers/check-driver",
-        {
-          "phone": widget.phoneNumber,
-        },
-      );
+          "/drivers/check-driver",
+          {
+            "phone": widget.phoneNumber,
+            "otp": otpController.text.trim(),
+          }
+      ).timeout(const Duration(seconds: 8));
 
-      if (response.statusCode != 200) {
-        throw Exception("Backend error");
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        if (data["driver"] != null) {
+
+          final driver = data["driver"];
+
+          appLog("Driver Data → $driver"); // 🔍 Debug
+
+          final prefs = await SharedPreferences.getInstance();
+
+          // ✅ SAVE ALL REQUIRED VALUES
+          await prefs.setString("driverName", driver["name"] ?? "");
+          await prefs.setString("phone", widget.phoneNumber);
+          await prefs.setString("licenseNo", driver["licenseNo"] ?? "");
+
+          await prefs.setString("busId", driver["busId"] ?? "");
+          await prefs.setString("permBusId", driver["busId"] ?? "");
+          await prefs.setString(
+            "busNumber",
+            driver["busNumber"] ?? driver["busId"] ?? "",
+          );
+          await prefs.setString(
+            "routeName",
+            driver["busName"] ?? driver["routeName"] ?? driver["route"] ?? "",
+          );
+          await prefs.setString("shift", driver["shift"] ?? "");
+
+          await prefs.setBool("isLoggedIn", true);
+          await prefs.setString("role", "driver");
+          await prefs.setBool("isTempBusActive", false);
+          await prefs.remove("pendingDriverPhone");
+
+          if (!mounted) return;
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const DriverHomePage(),
+            ),
+          );
+
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Driver not found")),
+          );
+        }
+      }
+      else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Server error ${response.statusCode}")),
+        );
       }
 
-      final data = jsonDecode(response.body);
-      final driver = data["driver"];
-
-      if (driver == null) {
-        throw Exception("Driver not found");
-      }
-
-      final prefs = await SharedPreferences.getInstance();
-
-      await prefs.setString("driverName", driver["name"] ?? "");
-      await prefs.setString("phone", widget.phoneNumber);
-      await prefs.setString("busId", driver["busId"] ?? "");
-      await prefs.setBool("isLoggedIn", true);
-      await prefs.setString("role", "driver");
-
-      if (!mounted) return;
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => const DriverHomePage(),
-        ),
-      );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Invalid OTP")),
+        const SnackBar(content: Text("Network error")),
       );
     } finally {
       if (mounted) setState(() => isLoading = false);

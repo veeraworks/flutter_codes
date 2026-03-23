@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'service/api_service.dart';
@@ -34,8 +33,9 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
   Future<void> _submitOtp() async {
 
     if (otpController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text("Enter OTP")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Enter OTP")),
+      );
       return;
     }
 
@@ -43,17 +43,9 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
 
     try {
 
-      /// 🔐 VERIFY OTP WITH FIREBASE
-      PhoneAuthCredential credential = PhoneAuthProvider.credential(
-        verificationId: widget.verificationId,
-        smsCode: otpController.text.trim(),
-      );
+      /// 🔥 DEV MODE → Skip Firebase OTP check
+      /// Any OTP will work while testing
 
-      await FirebaseAuth.instance.signInWithCredential(credential);
-
-      appLog("OTP verified with Firebase");
-
-      /// 🔥 CALL BACKEND
       final response = await ApiService.post(
         widget.isSignup
             ? "/auth/students/complete-signup"
@@ -85,9 +77,9 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
         throw Exception("Student not found");
       }
 
+      /// 💾 SAVE LOGIN SESSION
       final prefs = await SharedPreferences.getInstance();
 
-      /// 💾 SAVE LOGIN SESSION
       await prefs.setBool("isLoggedIn", true);
       await prefs.setString("role", "student");
       await prefs.setString("regNo", widget.regNo.toUpperCase());
@@ -96,7 +88,7 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
       await prefs.setString("routeName", student["busName"] ?? "");
       await prefs.setString("boardingPoint", student["boardingPoint"] ?? "");
 
-      /// 🔔 SUBSCRIBE TO BUS NOTIFICATIONS
+      /// 🔔 Subscribe to bus notification topic
       if (student["busId"] != null) {
         await FirebaseMessaging.instance
             .subscribeToTopic(student["busId"].toString().toLowerCase());
@@ -115,7 +107,7 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
       appLog("OTP LOGIN ERROR: $e");
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Invalid OTP")),
+        const SnackBar(content: Text("Login failed")),
       );
 
     } finally {
@@ -202,7 +194,6 @@ class _StudentOtpPageState extends State<StudentOtpPage> {
                   maxLength: 6,
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
-                    LengthLimitingTextInputFormatter(6),
                   ],
                   decoration: InputDecoration(
                     prefixIcon: const Icon(Icons.password, color: Colors.teal),
