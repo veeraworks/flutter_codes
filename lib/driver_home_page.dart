@@ -165,9 +165,14 @@ class _DriverHomePageState extends State<DriverHomePage>
   Future<void> _initialize() async {
     final prefs = await SharedPreferences.getInstance();
 
-    await _loadBusId();
+    // 🔹 First fetch profile from backend
     await _refreshDriverProfile();
+
+    // 🔹 Then load saved data
     await _loadBusInfo();
+    busId ??= permBusId;
+
+    // 🔹 Then listen to temporary bus changes
     await _listenToTemporaryBus();
 
     final wasTracking = prefs.getBool("trackingActive") ?? false;
@@ -181,7 +186,6 @@ class _DriverHomePageState extends State<DriverHomePage>
       });
 
       if (tripStarted && busId != null) {
-
         final service = FlutterBackgroundService();
 
         bool running = await service.isRunning();
@@ -199,9 +203,6 @@ class _DriverHomePageState extends State<DriverHomePage>
     }
 
     await _checkStatuses();
-
-    setState(() {
-    });
   }
 
   @override
@@ -227,12 +228,15 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     setState(() {
       driverName = prefs.getString("driverName") ?? "Driver";
+
       permBusNumber = prefs.getString("busNumber") ?? "-";
-      permRouteName =
-      ((prefs.getString("routeName")?.isNotEmpty ?? false) &&
-          prefs.getString("routeName") != "-")
-          ? prefs.getString("routeName")!.trim()
-          : "Not Assigned";
+      permRouteName = prefs.getString("routeName") ?? "-";
+      permBusId = prefs.getString("permBusId");
+
+      // keep main state variables synced
+      busNumber = permBusNumber;
+      routeName = permRouteName;
+
       shift = _getShiftByTime();
 
       isTempBusActive = prefs.getBool("isTempBusActive") ?? false;
@@ -240,8 +244,8 @@ class _DriverHomePageState extends State<DriverHomePage>
       tempRouteName = prefs.getString("tempRouteName");
     });
 
-    appLog("Route loaded → $permRouteName");
-
+    appLog("Loaded busNumber: $permBusNumber");
+    appLog("Loaded routeName: $permRouteName");
   }
   //================ LISTEN TO TEMPORARY BUS CHANGES ==========================
   Future<void> _listenToTemporaryBus() async {
@@ -679,35 +683,27 @@ class _DriverHomePageState extends State<DriverHomePage>
 
     final resolvedBusNumber =
         _pickText(profile["busNumber"]) ?? resolvedBusId;
-
-    final resolvedRouteName = _pickText(profile["busName"]) ??
-        _pickText(profile["routeName"]) ??
-        _pickText(profile["route"]);
-
     final resolvedLicense = _pickText(profile["licenseNo"]) ?? "-";
 
-    final resolvedShift = _pickText(profile["shift"]) ?? "-";
+    String finalRouteName =
+        _pickText(profile["busName"]) ??
+            _pickText(profile["routeName"]) ??
+            "-";
 
-    final existingRouteName = _pickText(prefs.getString("routeName"));
-    final finalRouteName =
-        resolvedRouteName ??
-            existingRouteName ??
-            profile["routeName"] ??
-            profile["busName"] ??
-            profile["route"] ??
-            "Not Assigned";
-
+    // SAVE TO PREFS
     await prefs.setString("driverName", resolvedName);
     await prefs.setString("busId", resolvedBusId);
+    await prefs.setString("permBusId", resolvedBusId);
+
     await prefs.setString("busNumber", resolvedBusNumber);
     await prefs.setString("routeName", finalRouteName);
     await prefs.setString("licenseNo", resolvedLicense);
-    await prefs.setString("shift", resolvedShift);
 
     setState(() {
       permBusNumber = resolvedBusNumber;
       permRouteName = finalRouteName;
       permBusId = resolvedBusId;
+      busId = resolvedBusId;
       shift = _getShiftByTime();
     });
 
