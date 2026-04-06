@@ -730,7 +730,7 @@ class _StudentHomePageState extends State<StudentHomePage>
                   end: Alignment.bottomRight,
                 ),
               ),
-              child: Row(
+              child:Row(
                 children: [
                   const CircleAvatar(
                     radius: 28,
@@ -744,28 +744,32 @@ class _StudentHomePageState extends State<StudentHomePage>
 
                   const SizedBox(width: 12),
 
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        studentName ?? "Student",
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w600,
+                  Expanded( // ✅ ADD THIS
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          studentName ?? "Student",
+                          maxLines: 1, // ✅ prevents overflow
+                          overflow: TextOverflow.ellipsis, // ✅ adds "..."
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                      const Text(
-                        "Student Account",
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
+                        const Text(
+                          "Student Account",
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 14,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ],
-              ),
+              )
             ),
 
             const SizedBox(height: 10),
