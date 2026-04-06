@@ -127,7 +127,30 @@ class _DriverMapPageState extends State<DriverMapPage> {
     super.initState();
     _initDriverMap();
   }
+  void _checkStepCompletion() {
+    if (_driverLocation == null || _navSteps.isEmpty) return;
 
+    final step = _navSteps.first;
+    final end = step["endLocation"];
+
+    if (end == null || end["lat"] == null || end["lng"] == null) return;
+
+    double stepLat = (end["lat"] as num).toDouble();
+    double stepLng = (end["lng"] as num).toDouble();
+
+    double distance = Geolocator.distanceBetween(
+      _driverLocation!.latitude,
+      _driverLocation!.longitude,
+      stepLat,
+      stepLng,
+    );
+
+    if (distance < 20) {
+      _navSteps.removeAt(0);
+      _updateNavigationInstruction();
+      _prepareStepTarget();
+    }
+  }
   Future<void> _initDriverMap() async {
     await _loadPrefs();
 
@@ -197,11 +220,14 @@ class _DriverMapPageState extends State<DriverMapPage> {
             return;
           }
 
-          double lat =
-              _previousBusPosition!.latitude + (latStep * currentStep);
+          double t = currentStep / steps;
+          t = t * t * (3 - 2 * t); // smooth easing
 
-          double lng =
-              _previousBusPosition!.longitude + (lngStep * currentStep);
+          double lat = _previousBusPosition!.latitude +
+              (newPosition.latitude - _previousBusPosition!.latitude) * t;
+
+          double lng = _previousBusPosition!.longitude +
+              (newPosition.longitude - _previousBusPosition!.longitude) * t;
 
           _animatedBusPosition = LatLng(lat, lng);
 
@@ -335,6 +361,8 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
           if (_isMovementSignificant(filtered)) {
             await _animateBus(filtered);
+            _checkStepCompletion();   // ✅ ADD THIS
+            _startNavigationCamera(_driverLocation!);
           }
 
           _checkStopArrival();
@@ -379,19 +407,21 @@ class _DriverMapPageState extends State<DriverMapPage> {
 
     switch (maneuver) {
       case "turn-left":
+      case "uturn-left":
         icon = Icons.turn_left;
         break;
 
       case "turn-right":
+      case "uturn-right":
         icon = Icons.turn_right;
         break;
 
-      case "keep-left":
-        icon = Icons.turn_slight_left;
+      case "straight":
+        icon = Icons.straight;
         break;
 
-      case "keep-right":
-        icon = Icons.turn_slight_right;
+      case "merge":
+        icon = Icons.merge;
         break;
 
       case "roundabout-left":
@@ -400,11 +430,15 @@ class _DriverMapPageState extends State<DriverMapPage> {
         break;
 
       default:
-        icon = Icons.straight;
+        icon = Icons.navigation;
     }
 
     setState(() {
-      _nextInstruction = step["instruction"];
+      String cleanInstruction(String html) {
+        return html.replaceAll(RegExp(r'<[^>]*>'), '');
+      }
+
+      _nextInstruction = cleanInstruction(step["instruction"]);
       _instructionDistance = step["distanceText"];
       _navIcon = icon;
     });
@@ -439,13 +473,15 @@ class _DriverMapPageState extends State<DriverMapPage> {
     }
   }
 
-  void _startNavigationCamera(LatLng busPos) {
+  void
+
+  _startNavigationCamera(LatLng busPos) {
     if (!_followBus || _mapController == null) return;
 
     if (_cameraTimer != null) return;
 
     _cameraTimer =
-        Timer.periodic(const Duration(milliseconds: 250), (timer) {
+        Timer.periodic(const Duration(milliseconds: 800), (timer) {
 
           if (_driverLocation == null) return;
 
@@ -455,23 +491,23 @@ class _DriverMapPageState extends State<DriverMapPage> {
           _cameraPosition ??= lookAhead;
 
           double lat = _cameraPosition!.latitude +
-              (lookAhead.latitude - _cameraPosition!.latitude) * 0.15;
+              (lookAhead.latitude - _cameraPosition!.latitude) * 0.25;
 
           double lng = _cameraPosition!.longitude +
-              (lookAhead.longitude - _cameraPosition!.longitude) * 0.15;
+              (lookAhead.longitude - _cameraPosition!.longitude) * 0.25;
 
           _cameraPosition = LatLng(lat, lng);
-
-          _mapController?.animateCamera(
-            CameraUpdate.newCameraPosition(
-              CameraPosition(
-                target: _cameraPosition!,
-                zoom: 17,
-                tilt: 55,
-                bearing: _driverBearing,
-              ),
-            ),
+          double distance = Geolocator.distanceBetween(
+            _cameraPosition!.latitude,
+            _cameraPosition!.longitude,
+            lookAhead.latitude,
+            lookAhead.longitude,
           );
+
+          if (distance < 5) return;
+          _mapController?.animateCamera(
+                CameraUpdate.newLatLng(_cameraPosition!),
+              );
         });
   }
 

@@ -427,10 +427,6 @@ class _DriverHomePageState extends State<DriverHomePage>
         }
       });
 
-      _mapController?.animateCamera(
-        CameraUpdate.newLatLng(latLng),
-      );
-
       // ================= FIREBASE UPDATE =================
       if (busId != null && busId!.isNotEmpty && internetOn) {
         FirebaseDatabase.instance.ref("buses/$busId/current").update({
