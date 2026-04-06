@@ -21,6 +21,7 @@ class _TemporaryBusChangePageState
   String selectedRoute = "";
   bool isTempActive = false;
   String selectedBus = "";
+  bool isLoading = true;
 
   final List<String> routes = [
     "Ashok Pillar",
@@ -62,6 +63,7 @@ class _TemporaryBusChangePageState
       currentRoute = savedRoute;
       selectedRoute = savedRoute;
       selectedBus = "";
+      isLoading = false;
     });
 
     if (!prefs.containsKey("originalBusNumber")) {
@@ -221,6 +223,11 @@ class _TemporaryBusChangePageState
   // ================= UI =================
   @override
   Widget build(BuildContext context) {
+    if (isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
     return Scaffold(
       backgroundColor: const Color(0xFFF6F3F7),
       appBar: AppBar(
